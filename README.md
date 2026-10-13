@@ -48,5 +48,5 @@ How it knows what's running: Claude Code writes `~/.claude/sessions/<pid>.json` 
 
 ```bash
 npx @vscode/vsce package
-code --install-extension claude-sessions-0.5.0.vsix
+code --install-extension claude-sessions-0.6.0.vsix
 ```
