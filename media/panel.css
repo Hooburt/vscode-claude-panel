@@ -893,3 +893,8 @@ body.skipping .switch-label {
   border: 1px solid var(--border);
   background: var(--vscode-keybindingLabel-background, transparent);
 }
+
+/* The hidden attribute must win over display rules like .icon-btn { display: inline-grid }. */
+[hidden] {
+  display: none !important;
+}
