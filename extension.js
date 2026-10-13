@@ -1,0 +1,765 @@
+// Claude Sessions: a panel for Claude Code terminal sessions — what's running, what's done,
+// open several at once in named, coloured terminals, and reopen them after a restart.
+const vscode = require('vscode');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFile } = require('child_process');
+const usage = require('./usage');
+const subagents = require('./subagents');
+
+const CLAUDE_DIR = path.join(os.homedir(), '.claude');
+const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
+// Claude Code writes <pid>.json here for every running session: { pid, sessionId, cwd, name, status, ... }
+const LIVE_DIR = path.join(CLAUDE_DIR, 'sessions');
+const SKIP_FLAG = '--dangerously-skip-permissions';
+const POLL_MS = 2000;
+
+const REMEMBERED_KEY = 'claudeSessions.open'; // workspaceState: ordered ids open in this window
+const PREFS_KEY = 'claudeSessions.prefs'; // globalState: { [id]: { pinned, hidden, alias, color } }
+
+// Claude Code's /color names → terminal theme colours.
+const COLORS = {
+  red: 'terminal.ansiRed',
+  orange: 'terminal.ansiYellow',
+  yellow: 'terminal.ansiYellow',
+  green: 'terminal.ansiGreen',
+  cyan: 'terminal.ansiCyan',
+  blue: 'terminal.ansiBlue',
+  purple: 'terminal.ansiMagenta',
+  pink: 'terminal.ansiBrightMagenta',
+};
+
+let context;
+let view;
+let statusItem;
+
+/** file → { offset, info } — session files are append-only, so only new bytes are parsed */
+const fileCache = new Map();
+/** id → session info, from the last scan */
+let sessions = new Map();
+/** id → live record (from LIVE_DIR) plus `terminal` when it runs in one of this window's terminals */
+let live = new Map();
+/** terminal → session id (or undefined for a new session), for terminals Claude hasn't registered yet */
+const pending = new Map();
+/** terminal → colour chosen for a new session, applied once its id is known */
+const pendingColor = new Map();
+/** terminal → session id last seen running in it */
+const termSession = new Map();
+/** terminal → consecutive polls with no Claude running in it */
+const termMisses = new Map();
+/** ids that finished working while you weren't looking at them */
+const unread = new Set();
+let polling = false;
+let lastPayload = '';
+
+const cfg = () => vscode.workspace.getConfiguration('claudeSessions');
+const prefs = () => context.globalState.get(PREFS_KEY, {});
+const remembered = () => context.workspaceState.get(REMEMBERED_KEY, []);
+
+function setPref(id, patch) {
+  const all = prefs();
+  const p = { ...all[id], ...patch };
+  for (const k of Object.keys(p)) if (p[k] === undefined || p[k] === false || p[k] === '') delete p[k];
+  if (Object.keys(p).length) all[id] = p;
+  else delete all[id];
+  return context.globalState.update(PREFS_KEY, all).then(refresh);
+}
+
+function setRemembered(ids) {
+  return context.workspaceState.update(REMEMBERED_KEY, [...new Set(ids)]);
+}
+
+// ---------------------------------------------------------------- session files
+
+// Claude Code names a project folder after the cwd with every non-alphanumeric char replaced by '-'.
+const encodeCwd = (p) => p.replace(/[^a-zA-Z0-9]/g, '-');
+
+async function projectDirs() {
+  let entries;
+  try {
+    entries = await fs.promises.readdir(PROJECTS_DIR, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const sub = cfg().get('includeSubfolders');
+  const dirs = new Set();
+  for (const f of vscode.workspace.workspaceFolders || []) {
+    const enc = encodeCwd(f.uri.fsPath);
+    for (const e of entries) {
+      if (e.isDirectory() && (e.name === enc || (sub && e.name.startsWith(enc + '-')))) {
+        dirs.add(path.join(PROJECTS_DIR, e.name));
+      }
+    }
+  }
+  return [...dirs];
+}
+
+const STR = '"((?:[^"\\\\]|\\\\.)*)"';
+const FIELDS = [
+  ['name', 'agent-name', 'agentName'],
+  ['customTitle', 'custom-title', 'customTitle'],
+  ['aiTitle', 'ai-title', 'aiTitle'],
+  ['color', 'agent-color', 'agentColor'],
+  ['lastPrompt', 'last-prompt', 'lastPrompt'],
+].map(([field, type, key]) => [field, new RegExp(`"type":"${type}","${key}":${STR}`, 'g')]);
+const BRANCH_RE = new RegExp(`"gitBranch":${STR}`, 'g');
+const CWD_RE = new RegExp(`"cwd":${STR}`);
+
+function unjson(s) {
+  try {
+    return JSON.parse('"' + s + '"');
+  } catch {
+    return s;
+  }
+}
+
+function lastMatch(text, re) {
+  re.lastIndex = 0;
+  let m, last;
+  while ((m = re.exec(text))) last = m[1];
+  return last === undefined ? undefined : unjson(last);
+}
+
+async function readSession(file) {
+  const st = await fs.promises.stat(file);
+  let c = fileCache.get(file);
+  if (!c || st.size < c.offset) {
+    c = { offset: 0, info: { id: path.basename(file, '.jsonl'), file } };
+    fileCache.set(file, c);
+  }
+  if (st.size > c.offset) {
+    const fh = await fs.promises.open(file, 'r');
+    try {
+      const buf = Buffer.alloc(st.size - c.offset);
+      await fh.read(buf, 0, buf.length, c.offset);
+      const end = buf.lastIndexOf(10) + 1; // whole lines only; a half-written one is read next time
+      const text = buf.toString('utf8', 0, end);
+      c.offset += end;
+      const info = c.info;
+      for (const [field, re] of FIELDS) {
+        const v = lastMatch(text, re);
+        if (v !== undefined) info[field] = v;
+      }
+      info.branch = lastMatch(text, BRANCH_RE) ?? info.branch;
+      if (!info.cwd) info.cwd = unjson((CWD_RE.exec(text) || [])[1] || '');
+      info.hasMessages = info.hasMessages || text.includes('"type":"user"');
+      Object.assign(info, usage.scan(text));
+      subagents.scanText(info, text); // subagent completions, for subagents.update()
+    } finally {
+      await fh.close();
+    }
+  }
+  c.info.mtime = st.mtimeMs;
+  return c.info;
+}
+
+async function scan() {
+  const files = [];
+  for (const dir of await projectDirs()) {
+    for (const f of await fs.promises.readdir(dir).catch(() => [])) {
+      if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
+    }
+  }
+  const infos = await Promise.all(files.map((f) => readSession(f).catch(() => undefined)));
+  sessions = new Map(infos.filter((s) => s && s.hasMessages).map((s) => [s.id, s]));
+}
+
+// ---------------------------------------------------------------- live sessions
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+async function readLive() {
+  const files = await fs.promises.readdir(LIVE_DIR).catch(() => []);
+  const out = [];
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const d = JSON.parse(await fs.promises.readFile(path.join(LIVE_DIR, f), 'utf8'));
+      if (d.sessionId && d.pid && alive(d.pid)) out.push(d);
+    } catch {}
+  }
+  return out;
+}
+
+function parentPids() {
+  return new Promise((resolve) => {
+    execFile('ps', ['-A', '-o', 'pid=,ppid='], (err, stdout) => {
+      const map = new Map();
+      if (!err) {
+        for (const line of stdout.split('\n')) {
+          const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+          if (pid) map.set(pid, ppid);
+        }
+      }
+      resolve(map);
+    });
+  });
+}
+
+async function pollLive() {
+  const records = await readLive();
+  const parents = records.length ? await parentPids() : new Map();
+  const shells = new Map();
+  await Promise.all(
+    vscode.window.terminals.map(async (t) => {
+      const pid = await t.processId;
+      if (pid) shells.set(pid, t);
+    })
+  );
+
+  const next = new Map();
+  for (const d of records) {
+    let terminal;
+    // Walk up from the claude process to the shell of one of this window's terminals.
+    for (let p = parents.get(d.pid), i = 0; p > 1 && i < 6; p = parents.get(p), i++) {
+      if (shells.has(p)) {
+        terminal = shells.get(p);
+        break;
+      }
+    }
+    next.set(d.sessionId, { ...d, terminal });
+  }
+
+  // Terminals we just started, before Claude has registered them.
+  const running = new Set([...next.values()].map((e) => e.terminal).filter(Boolean));
+  for (const [t, id] of pending) {
+    if (!vscode.window.terminals.includes(t) || running.has(t)) pending.delete(t);
+    else if (id && !next.has(id)) next.set(id, { sessionId: id, status: 'starting', terminal: t });
+  }
+
+  // Finished, or needs you, while you were looking elsewhere? Claude reports busy → idle when a turn
+  // ends, and 'waiting' (with waitingFor, e.g. "permission prompt") when it's blocked on you.
+  for (const [id, e] of next) {
+    const before = live.get(id)?.status;
+    if (!before || before === e.status || !e.terminal) continue;
+    if (vscode.window.state.focused && vscode.window.activeTerminal === e.terminal) continue;
+    const show = (c) => c && e.terminal.show();
+    if (e.status === 'waiting') {
+      if (cfg().get('notifyWhenDone')) {
+        const why = e.waitingFor ? `: ${e.waitingFor}` : '';
+        vscode.window.showWarningMessage(`${titleOf(id)} needs you${why}.`, 'Show').then(show);
+      }
+    } else if (before === 'busy' && e.status === 'idle') {
+      unread.add(id);
+      if (cfg().get('notifyWhenDone')) vscode.window.showInformationMessage(`${titleOf(id)} is done.`, 'Show').then(show);
+    }
+  }
+  live = next;
+  for (const id of unread) if (!live.get(id)?.terminal) unread.delete(id);
+  trackRemembered();
+}
+
+// Keeps the list of sessions open in this window, for reopening after a restart. A session leaves the
+// list only when you close its terminal or exit Claude in it — not when the window shuts down.
+function trackRemembered() {
+  const ids = remembered();
+  const add = [];
+  const seen = new Set();
+  for (const [id, e] of live) {
+    if (!e.terminal) continue;
+    seen.add(e.terminal);
+    termSession.set(e.terminal, id);
+    termMisses.delete(e.terminal);
+    if (!ids.includes(id)) add.push(id);
+    const color = pendingColor.get(e.terminal);
+    if (color && e.status !== 'starting') {
+      pendingColor.delete(e.terminal);
+      if (!sessions.get(id)?.color) setPref(id, { color });
+    }
+  }
+  const drop = [];
+  for (const [t, id] of termSession) {
+    if (seen.has(t) || pending.has(t)) continue;
+    const misses = (termMisses.get(t) || 0) + 1;
+    termMisses.set(t, misses);
+    if (misses >= 3) {
+      termSession.delete(t);
+      termMisses.delete(t);
+      if (vscode.window.terminals.includes(t)) drop.push(id); // Claude exited, terminal still there
+    }
+  }
+  if (add.length || drop.length) setRemembered([...ids.filter((id) => !drop.includes(id)), ...add]);
+}
+
+// ---------------------------------------------------------------- terminals
+
+function titleOf(id) {
+  const s = sessions.get(id) || {};
+  const p = prefs()[id] || {};
+  const l = live.get(id);
+  const liveName = l?.nameSource === 'user' ? l.name : undefined;
+  return p.alias || s.name || liveName || s.customTitle || s.aiTitle || s.lastPrompt || id.slice(0, 8);
+}
+
+const colorOf = (id) => prefs()[id]?.color || sessions.get(id)?.color;
+
+function quote(a) {
+  return /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`;
+}
+
+function launchArgs(base, skip = cfg().get('skipPermissions')) {
+  const extra = cfg().get('extraArgs').filter((a) => a !== SKIP_FLAG);
+  return [cfg().get('command'), ...base, ...(skip ? [SKIP_FLAG] : []), ...extra].map(quote).join(' ');
+}
+
+function createTerminal(name, color, cwd) {
+  return vscode.window.createTerminal({
+    name,
+    cwd: cwd && fs.existsSync(cwd) ? cwd : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    color: new vscode.ThemeColor(COLORS[color] || 'terminal.ansiWhite'),
+    iconPath: new vscode.ThemeIcon('sparkle'),
+    location: terminalLocation(),
+    // Not transient: VS Code keeps these running across window reloads. After a full restart it revives
+    // them as empty shells, which resume() reuses by name.
+  });
+}
+
+// In 'split' mode session terminals live in the second editor group, files in the first.
+const TERMINAL_COLUMN = vscode.ViewColumn.Two;
+const splitMode = () => cfg().get('terminalLocation') === 'split';
+
+function terminalLocation() {
+  switch (cfg().get('terminalLocation')) {
+    case 'panel':
+      return vscode.TerminalLocation.Panel;
+    case 'editor':
+      return vscode.TerminalLocation.Editor;
+    default:
+      return { viewColumn: TERMINAL_COLUMN };
+  }
+}
+
+const isTerminalTab = (tab) => tab.input instanceof vscode.TabInputTerminal;
+
+// A file opened while a session terminal has focus would land among the terminals; send it left.
+function keepFilesLeft(e) {
+  if (!splitMode()) return;
+  for (const tab of e.opened) {
+    const g = tab.group;
+    if (g.viewColumn !== TERMINAL_COLUMN || isTerminalTab(tab) || !tab.isActive || !g.isActive) continue;
+    if (!g.tabs.some(isTerminalTab)) continue; // the user is using the second group for files
+    vscode.commands.executeCommand('workbench.action.moveEditorToFirstGroup');
+  }
+}
+
+// The order ⌘1…⌘9 use: Claude terminal tabs left to right as they sit in the editor groups, then
+// any in the terminal panel in the order they were opened.
+function sessionOrder() {
+  const byName = new Map();
+  for (const [id, e] of live) if (e.terminal) byName.set(e.terminal.name, id);
+  const ids = [];
+  const add = (id) => id && live.get(id)?.terminal && !ids.includes(id) && ids.push(id);
+  for (const g of vscode.window.tabGroups.all) for (const tab of g.tabs) if (isTerminalTab(tab)) add(byName.get(tab.label));
+  remembered().forEach(add);
+  [...live.keys()].forEach(add);
+  return ids;
+}
+
+function focusSlot(n) {
+  const id = sessionOrder()[n - 1];
+  if (id) resume(id);
+}
+
+// Keybindings for extension commands are sent to the shell while a terminal has focus, unless the
+// command is listed in terminal.integrated.commandsToSkipShell.
+function letSlotKeysThroughTerminal() {
+  const conf = vscode.workspace.getConfiguration('terminal.integrated');
+  const list = conf.get('commandsToSkipShell') || [];
+  const ours = Array.from({ length: 9 }, (_, i) => `claudeSessions.focus${i + 1}`);
+  const missing = ours.filter((c) => !list.includes(c));
+  if (missing.length) conf.update('commandsToSkipShell', [...list, ...missing], vscode.ConfigurationTarget.Global);
+}
+
+// Moves the Claude terminals of this window into the right-hand editor group.
+async function moveSessionsToSplit() {
+  for (const e of [...live.values()]) {
+    const t = e.terminal;
+    if (!t) continue;
+    t.show();
+    await vscode.commands.executeCommand('workbench.action.terminal.moveToEditor');
+    const g = vscode.window.tabGroups.activeTabGroup;
+    if (isTerminalTab(g.activeTab || {}) && g.activeTab.label === t.name && g.viewColumn !== TERMINAL_COLUMN) {
+      await vscode.commands.executeCommand('workbench.action.moveEditorToSecondGroup');
+    }
+  }
+}
+
+// A terminal VS Code revived after a restart, with this session's name and nothing running in it.
+function idleTerminalNamed(name) {
+  const busy = new Set([...live.values()].map((e) => e.terminal).filter(Boolean));
+  return vscode.window.terminals.find(
+    (t) => t.name.toLowerCase() === name.toLowerCase() && !busy.has(t) && !pending.has(t) && !t.exitStatus
+  );
+}
+
+async function resume(id, { skip, fork, preserveFocus } = {}) {
+  const e = live.get(id);
+  if (e?.terminal && !fork) {
+    e.terminal.show(preserveFocus);
+    unread.delete(id);
+    return refresh();
+  }
+  if (e && !e.terminal && !fork) {
+    const choice = await vscode.window.showWarningMessage(
+      `"${titleOf(id)}" is already running in another window or terminal. Opening it twice makes the two copies diverge.`,
+      { modal: true },
+      'Open anyway',
+      'Open a fork'
+    );
+    if (!choice) return;
+    fork = choice === 'Open a fork';
+  }
+  const s = sessions.get(id) || {};
+  const title = titleOf(id);
+  const alias = prefs()[id]?.alias;
+  const base = ['--resume', id, ...(fork ? ['--fork-session'] : []), ...(alias ? ['-n', alias] : [])];
+  const t = (!fork && idleTerminalNamed(title)) || createTerminal(fork ? `${title} (fork)` : title, colorOf(id), s.cwd);
+  t.sendText(launchArgs(base, skip));
+  t.show(preserveFocus);
+  pending.set(t, fork ? undefined : id);
+  if (!fork) {
+    const ids = remembered();
+    if (!ids.includes(id)) await setRemembered([...ids, id]);
+  }
+  refresh();
+}
+
+async function resumeMany(ids, opts) {
+  for (const id of ids) await resume(id, { ...opts, preserveFocus: true });
+}
+
+async function newSession() {
+  const name = await vscode.window.showInputBox({ title: 'New Claude session', prompt: 'Session name (optional)' });
+  if (name === undefined) return;
+  const color = await pickColor('Terminal colour');
+  if (color === undefined) return;
+  const t = createTerminal(name || 'claude', color, undefined);
+  t.sendText(launchArgs(name ? ['-n', name] : []));
+  t.show();
+  pending.set(t, undefined);
+  if (color) pendingColor.set(t, color);
+  refresh();
+}
+
+async function pickColor(title) {
+  const pick = await vscode.window.showQuickPick(
+    [
+      { label: 'none', color: '' },
+      ...Object.keys(COLORS).map((c) => ({
+        label: c,
+        color: c,
+        iconPath: new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor(COLORS[c])),
+      })),
+    ],
+    { title }
+  );
+  return pick?.color;
+}
+
+async function moreActions(id) {
+  const p = prefs()[id] || {};
+  const s = sessions.get(id) || {};
+  const skip = cfg().get('skipPermissions');
+  const items = [
+    { label: '$(edit) Rename…', run: renameSession },
+    { label: '$(symbol-color) Colour…', run: recolorSession },
+    { label: p.pinned ? '$(pinned) Unpin' : '$(pin) Pin', run: () => setPref(id, { pinned: !p.pinned }) },
+    { label: p.hidden ? '$(eye) Unhide' : '$(eye-closed) Hide', run: () => setPref(id, { hidden: !p.hidden }) },
+    { label: '', kind: vscode.QuickPickItemKind.Separator },
+    {
+      label: skip ? '$(shield) Resume asking for permissions' : '$(warning) Resume skipping permissions',
+      run: () => resume(id, { skip: !skip }),
+    },
+    { label: '$(repo-forked) Fork into a new session', run: () => resume(id, { fork: true }) },
+    { label: '', kind: vscode.QuickPickItemKind.Separator },
+    {
+      label: '$(go-to-file) Open transcript file',
+      run: () => s.file && vscode.window.showTextDocument(vscode.Uri.file(s.file)),
+    },
+    { label: '$(copy) Copy session id', run: () => vscode.env.clipboard.writeText(id) },
+    { label: '$(copy) Copy resume command', run: () => vscode.env.clipboard.writeText(launchArgs(['--resume', id])) },
+  ];
+  const pick = await vscode.window.showQuickPick(items, { title: titleOf(id) });
+  return pick?.run?.(id);
+}
+
+async function renameSession(id) {
+  const name = await vscode.window.showInputBox({
+    title: 'Rename session',
+    value: titleOf(id),
+    prompt: 'Shown in the panel and terminal tab, and passed to Claude as -n on the next resume.',
+  });
+  if (name === undefined) return;
+  return setPref(id, { alias: name.trim() || undefined });
+}
+
+async function recolorSession(id) {
+  const color = await pickColor('Session colour');
+  if (color === undefined) return;
+  return setPref(id, { color: color || undefined });
+}
+
+const notReopened = () => remembered().filter((id) => !live.get(id)?.terminal && sessions.has(id));
+
+async function restoreLast() {
+  const ids = notReopened();
+  if (!ids.length) return vscode.window.showInformationMessage('No Claude sessions to reopen.');
+  await resumeMany(ids);
+}
+
+async function restoreOnStartup() {
+  const mode = cfg().get('restoreOnStartup');
+  const ids = notReopened();
+  if (mode === 'never' || !ids.length) return;
+  if (mode === 'ask') {
+    const yes = `Reopen ${ids.length}`;
+    const names = ids.slice(0, 4).map(titleOf).join(', ') + (ids.length > 4 ? ', …' : '');
+    const choice = await vscode.window.showInformationMessage(
+      `Reopen the Claude sessions that were open last time? (${names})`,
+      yes,
+      'Choose in panel'
+    );
+    if (choice === 'Choose in panel') return vscode.commands.executeCommand('claudeSessions.panel.focus');
+    if (choice !== yes) return;
+  }
+  return resumeMany(ids);
+}
+
+function ago(ms) {
+  const s = (Date.now() - ms) / 1000;
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+async function quickPickResume() {
+  const items = [...sessions.values()]
+    .filter((s) => !prefs()[s.id]?.hidden)
+    .sort((a, b) => b.mtime - a.mtime)
+    .map((s) => ({
+      label: `${live.get(s.id)?.terminal ? '$(terminal) ' : ''}${titleOf(s.id)}`,
+      description: [colorOf(s.id), ago(s.mtime), s.cwd && path.basename(s.cwd)].filter(Boolean).join(' · '),
+      detail: s.lastPrompt && s.lastPrompt !== titleOf(s.id) ? s.lastPrompt : undefined,
+      iconPath: new vscode.ThemeIcon(
+        'circle-filled',
+        new vscode.ThemeColor(COLORS[colorOf(s.id)] || 'disabledForeground')
+      ),
+      id: s.id,
+    }));
+  const picked = await vscode.window.showQuickPick(items, {
+    canPickMany: true,
+    matchOnDescription: true,
+    matchOnDetail: true,
+    title: 'Resume Claude sessions',
+  });
+  if (picked?.length) await resumeMany(picked.map((p) => p.id));
+}
+
+// ---------------------------------------------------------------- panel
+
+function payload() {
+  const all = prefs();
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const recent = [...sessions.values()].sort((a, b) => b.mtime - a.mtime).slice(0, cfg().get('maxRecent'));
+  const ids = new Set(recent.map((s) => s.id));
+  for (const id of live.keys()) ids.add(id);
+  for (const [id, p] of Object.entries(all)) if (p.pinned && sessions.has(id)) ids.add(id);
+
+  const list = [...ids].map((id) => {
+    const s = sessions.get(id) || {};
+    const p = all[id] || {};
+    const l = live.get(id);
+    const title = titleOf(id);
+    return {
+      id,
+      title,
+      color: colorOf(id) || '',
+      lastPrompt: s.lastPrompt && s.lastPrompt !== title ? s.lastPrompt : '',
+      mtime: s.mtime || l?.updatedAt || Date.now(),
+      folder: s.cwd && root && s.cwd !== root ? path.relative(root, s.cwd) : '',
+      branch: s.branch && s.branch !== 'HEAD' ? s.branch : '',
+      pinned: !!p.pinned,
+      hidden: !!p.hidden,
+      open: !!l?.terminal,
+      elsewhere: !!l && !l.terminal,
+      status: l?.status || '',
+      waitingFor: l?.status === 'waiting' ? l.waitingFor || '' : '',
+      unread: unread.has(id),
+      ctx: usage.forPayload(s, cfg().get('contextWindow')), // [tokens in use, window size]
+      agents: subagents.get(id),
+    };
+  });
+  return {
+    sessions: list,
+    openOrder: sessionOrder(),
+    mod: process.platform === 'darwin' ? '⌘' : 'Ctrl+',
+    reopen: notReopened().map((id) => ({ id, title: titleOf(id) })),
+    skipPermissions: !!cfg().get('skipPermissions'),
+  };
+}
+
+function refresh() {
+  const p = payload();
+  const json = JSON.stringify(p);
+  if (view && json !== lastPayload) {
+    lastPayload = json;
+    view.webview.postMessage({ type: 'state', ...p });
+  }
+  const open = p.sessions.filter((s) => s.open);
+  const busy = open.filter((s) => s.status === 'busy').length;
+  const waiting = open.filter((s) => s.status === 'waiting').length;
+  const attention = unread.size + waiting;
+  statusItem.text =
+    `$(${attention ? 'bell-dot' : 'sparkle'}) ${open.length}` +
+    (busy ? ` · ${busy} working` : '') +
+    (waiting ? ` · ${waiting} need${waiting > 1 ? '' : 's'} you` : '');
+  statusItem.tooltip = `Claude sessions in this window: ${open.length} open, ${busy} working, ${waiting} waiting for you, ${unread.size} done since you looked`;
+  statusItem.show();
+  if (view) view.badge = attention ? { value: attention, tooltip: `${waiting} need you, ${unread.size} finished` } : undefined;
+}
+
+async function tick() {
+  if (polling) return;
+  polling = true;
+  try {
+    await scan();
+    await pollLive();
+    await subagents.update(sessions, live);
+    refresh();
+  } catch (e) {
+    console.error('[claude-sessions]', e);
+  } finally {
+    polling = false;
+  }
+}
+
+class PanelProvider {
+  resolveWebviewView(webviewView) {
+    view = webviewView;
+    lastPayload = '';
+    const media = vscode.Uri.joinPath(context.extensionUri, 'media');
+    const wv = webviewView.webview;
+    wv.options = { enableScripts: true, localResourceRoots: [media] };
+    const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    wv.html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${wv.cspSource}; script-src 'nonce-${nonce}';">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="${wv.asWebviewUri(vscode.Uri.joinPath(media, 'panel.css'))}">
+</head><body>
+<div id="app"></div>
+<script nonce="${nonce}" src="${wv.asWebviewUri(vscode.Uri.joinPath(media, 'panel.js'))}"></script>
+</body></html>`;
+    wv.onDidReceiveMessage((m) => handleMessage(m).catch((e) => vscode.window.showErrorMessage(String(e))));
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        lastPayload = '';
+        refresh();
+      }
+    });
+    webviewView.onDidDispose(() => (view = undefined));
+  }
+}
+
+async function handleMessage(m) {
+  switch (m.type) {
+    case 'ready':
+      lastPayload = '';
+      return refresh();
+    case 'open':
+      return resumeMany(m.ids);
+    case 'focus':
+      return resume(m.id);
+    case 'new':
+      return newSession();
+    case 'refresh':
+      return tick();
+    case 'pin':
+      return setPref(m.id, { pinned: !prefs()[m.id]?.pinned });
+    case 'unhide':
+      return setPref(m.id, { hidden: false });
+    case 'more':
+      return moreActions(m.id);
+    case 'openAgent': {
+      const file = subagents.transcript(m.id, m.agent);
+      return file && vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });
+    }
+    case 'reopenLast':
+      return restoreLast();
+    case 'dismissLast':
+      return setRemembered(remembered().filter((id) => live.get(id)?.terminal)).then(refresh);
+    case 'skipPermissions':
+      return cfg().update('skipPermissions', !!m.value, vscode.ConfigurationTarget.Global);
+  }
+}
+
+// ---------------------------------------------------------------- activation
+
+function activate(ctx) {
+  context = ctx;
+  statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  statusItem.command = 'claudeSessions.showPanel';
+
+  ctx.subscriptions.push(
+    statusItem,
+    vscode.window.registerWebviewViewProvider('claudeSessions.panel', new PanelProvider(), {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.commands.registerCommand('claudeSessions.resume', quickPickResume),
+    vscode.commands.registerCommand('claudeSessions.new', newSession),
+    vscode.commands.registerCommand('claudeSessions.restore', restoreLast),
+    vscode.commands.registerCommand('claudeSessions.showPanel', () =>
+      vscode.commands.executeCommand('claudeSessions.panel.focus')
+    ),
+    vscode.commands.registerCommand('claudeSessions.moveToSplit', moveSessionsToSplit),
+    vscode.window.tabGroups.onDidChangeTabs((e) => {
+      keepFilesLeft(e);
+      refresh(); // tab order drives ⌘1…⌘9
+    }),
+    ...Array.from({ length: 9 }, (_, i) =>
+      vscode.commands.registerCommand(`claudeSessions.focus${i + 1}`, () => focusSlot(i + 1))
+    ),
+    vscode.commands.registerCommand('claudeSessions.toggleSkipPermissions', () =>
+      cfg().update('skipPermissions', !cfg().get('skipPermissions'), vscode.ConfigurationTarget.Global)
+    ),
+    vscode.window.onDidCloseTerminal((t) => {
+      const id = termSession.get(t) ?? pending.get(t);
+      termSession.delete(t);
+      termMisses.delete(t);
+      pending.delete(t);
+      pendingColor.delete(t);
+      if (id && t.exitStatus?.reason !== vscode.TerminalExitReason.Shutdown) {
+        setRemembered(remembered().filter((x) => x !== id));
+      }
+      tick();
+    }),
+    vscode.window.onDidOpenTerminal(() => setTimeout(tick, 1500)),
+    vscode.window.onDidChangeActiveTerminal((t) => {
+      for (const [id, e] of live) if (e.terminal === t) unread.delete(id);
+      refresh();
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('claudeSessions')) return;
+      if (e.affectsConfiguration('claudeSessions.terminalLocation') && splitMode()) moveSessionsToSplit();
+      refresh();
+    })
+  );
+
+  const timer = setInterval(tick, POLL_MS);
+  ctx.subscriptions.push({ dispose: () => clearInterval(timer) });
+  letSlotKeysThroughTerminal();
+  tick().then(restoreOnStartup);
+}
+
+function deactivate() {}
+
+module.exports = { activate, deactivate };

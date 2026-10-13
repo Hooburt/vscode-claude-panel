@@ -1,0 +1,266 @@
+{
+  "name": "claude-sessions",
+  "displayName": "Claude Sessions",
+  "description": "A panel for your Claude Code terminal sessions: see what's running, open several at once in named, coloured terminals, and reopen them after a restart.",
+  "version": "0.5.0",
+  "publisher": "bkaluza",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "claudeSessions",
+          "title": "Claude Sessions",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeSessions": [
+        {
+          "type": "webview",
+          "id": "claudeSessions.panel",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudeSessions.resume",
+        "title": "Resume Sessions…",
+        "category": "Claude Sessions",
+        "icon": "$(history)"
+      },
+      {
+        "command": "claudeSessions.new",
+        "title": "New Session…",
+        "category": "Claude Sessions",
+        "icon": "$(add)"
+      },
+      {
+        "command": "claudeSessions.restore",
+        "title": "Reopen Last Sessions",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.toggleSkipPermissions",
+        "title": "Toggle Skip Permissions",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.showPanel",
+        "title": "Show Panel",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.moveToSplit",
+        "title": "Move Open Sessions to the Right Editor Group",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus1",
+        "title": "Switch to Open Session 1",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus2",
+        "title": "Switch to Open Session 2",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus3",
+        "title": "Switch to Open Session 3",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus4",
+        "title": "Switch to Open Session 4",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus5",
+        "title": "Switch to Open Session 5",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus6",
+        "title": "Switch to Open Session 6",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus7",
+        "title": "Switch to Open Session 7",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus8",
+        "title": "Switch to Open Session 8",
+        "category": "Claude Sessions"
+      },
+      {
+        "command": "claudeSessions.focus9",
+        "title": "Switch to Open Session 9",
+        "category": "Claude Sessions"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "claudeSessions.resume",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
+      },
+      {
+        "command": "claudeSessions.showPanel",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c"
+      },
+      {
+        "command": "claudeSessions.focus1",
+        "key": "ctrl+1",
+        "mac": "cmd+1",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      },
+      {
+        "command": "claudeSessions.focus2",
+        "key": "ctrl+2",
+        "mac": "cmd+2",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      },
+      {
+        "command": "claudeSessions.focus3",
+        "key": "ctrl+3",
+        "mac": "cmd+3",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      },
+      {
+        "command": "claudeSessions.focus4",
+        "key": "ctrl+4",
+        "mac": "cmd+4",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      },
+      {
+        "command": "claudeSessions.focus5",
+        "key": "ctrl+5",
+        "mac": "cmd+5",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      },
+      {
+        "command": "claudeSessions.focus6",
+        "key": "ctrl+6",
+        "mac": "cmd+6",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      },
+      {
+        "command": "claudeSessions.focus7",
+        "key": "ctrl+7",
+        "mac": "cmd+7",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      },
+      {
+        "command": "claudeSessions.focus8",
+        "key": "ctrl+8",
+        "mac": "cmd+8",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      },
+      {
+        "command": "claudeSessions.focus9",
+        "key": "ctrl+9",
+        "mac": "cmd+9",
+        "when": "terminalFocus || focusedView == 'claudeSessions.panel'"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "claudeSessions.resume",
+          "when": "view == terminal",
+          "group": "navigation@90"
+        },
+        {
+          "command": "claudeSessions.new",
+          "when": "view == terminal",
+          "group": "navigation@91"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Sessions",
+      "properties": {
+        "claudeSessions.skipPermissions": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start sessions with --dangerously-skip-permissions. Also toggled from the panel."
+        },
+        "claudeSessions.command": {
+          "type": "string",
+          "default": "claude",
+          "description": "Command that starts Claude Code."
+        },
+        "claudeSessions.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra arguments added to every launch."
+        },
+        "claudeSessions.includeSubfolders": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also list sessions started in subfolders of the workspace."
+        },
+        "claudeSessions.terminalLocation": {
+          "type": "string",
+          "enum": [
+            "split",
+            "editor",
+            "panel"
+          ],
+          "enumDescriptions": [
+            "Editor tabs in the right-hand editor group; files stay in the left one.",
+            "Editor tabs in the current editor group.",
+            "The terminal panel."
+          ],
+          "default": "split",
+          "description": "Where session terminals open."
+        },
+        "claudeSessions.restoreOnStartup": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "default": "ask",
+          "description": "Reopen the sessions that were open when the window last closed."
+        },
+        "claudeSessions.notifyWhenDone": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification when a session finishes working while you're looking at something else."
+        },
+        "claudeSessions.maxRecent": {
+          "type": "number",
+          "default": 100,
+          "description": "How many past sessions the panel lists."
+        },
+        "claudeSessions.contextWindow": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Context window size in tokens for the usage bar on each session. 0 = auto (1M for current models and [1m] variants, 200K for Claude 3/4)."
+        }
+      }
+    }
+  }
+}
