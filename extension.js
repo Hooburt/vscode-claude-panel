@@ -2,13 +2,13 @@
 // open several at once in named, coloured terminals, and reopen them after a restart.
 const vscode = require('vscode');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const usage = require('./usage');
 const subagents = require('./subagents');
+const transcripts = require('./transcripts');
 
-const CLAUDE_DIR = path.join(os.homedir(), '.claude');
+const CLAUDE_DIR = transcripts.claudeDir(); // ~/.claude, or $CLAUDE_CONFIG_DIR
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 // Claude Code writes <pid>.json here for every running session: { pid, sessionId, cwd, name, status, ... }
 const LIVE_DIR = path.join(CLAUDE_DIR, 'sessions');
@@ -34,8 +34,6 @@ let context;
 let view;
 let statusItem;
 
-/** file → { offset, info } — session files are append-only, so only new bytes are parsed */
-const fileCache = new Map();
 /** id → session info, from the last scan */
 let sessions = new Map();
 /** id → live record (from LIVE_DIR) plus `terminal` when it runs in one of this window's terminals */
@@ -72,9 +70,6 @@ function setRemembered(ids) {
 
 // ---------------------------------------------------------------- session files
 
-// Claude Code names a project folder after the cwd with every non-alphanumeric char replaced by '-'.
-const encodeCwd = (p) => p.replace(/[^a-zA-Z0-9]/g, '-');
-
 async function projectDirs() {
   let entries;
   try {
@@ -85,7 +80,7 @@ async function projectDirs() {
   const sub = cfg().get('includeSubfolders');
   const dirs = new Set();
   for (const f of vscode.workspace.workspaceFolders || []) {
-    const enc = encodeCwd(f.uri.fsPath);
+    const enc = transcripts.encodeCwd(f.uri.fsPath);
     for (const e of entries) {
       if (e.isDirectory() && (e.name === enc || (sub && e.name.startsWith(enc + '-')))) {
         dirs.add(path.join(PROJECTS_DIR, e.name));
@@ -95,65 +90,6 @@ async function projectDirs() {
   return [...dirs];
 }
 
-const STR = '"((?:[^"\\\\]|\\\\.)*)"';
-const FIELDS = [
-  ['name', 'agent-name', 'agentName'],
-  ['customTitle', 'custom-title', 'customTitle'],
-  ['aiTitle', 'ai-title', 'aiTitle'],
-  ['color', 'agent-color', 'agentColor'],
-  ['lastPrompt', 'last-prompt', 'lastPrompt'],
-].map(([field, type, key]) => [field, new RegExp(`"type":"${type}","${key}":${STR}`, 'g')]);
-const BRANCH_RE = new RegExp(`"gitBranch":${STR}`, 'g');
-const CWD_RE = new RegExp(`"cwd":${STR}`);
-
-function unjson(s) {
-  try {
-    return JSON.parse('"' + s + '"');
-  } catch {
-    return s;
-  }
-}
-
-function lastMatch(text, re) {
-  re.lastIndex = 0;
-  let m, last;
-  while ((m = re.exec(text))) last = m[1];
-  return last === undefined ? undefined : unjson(last);
-}
-
-async function readSession(file) {
-  const st = await fs.promises.stat(file);
-  let c = fileCache.get(file);
-  if (!c || st.size < c.offset) {
-    c = { offset: 0, info: { id: path.basename(file, '.jsonl'), file } };
-    fileCache.set(file, c);
-  }
-  if (st.size > c.offset) {
-    const fh = await fs.promises.open(file, 'r');
-    try {
-      const buf = Buffer.alloc(st.size - c.offset);
-      await fh.read(buf, 0, buf.length, c.offset);
-      const end = buf.lastIndexOf(10) + 1; // whole lines only; a half-written one is read next time
-      const text = buf.toString('utf8', 0, end);
-      c.offset += end;
-      const info = c.info;
-      for (const [field, re] of FIELDS) {
-        const v = lastMatch(text, re);
-        if (v !== undefined) info[field] = v;
-      }
-      info.branch = lastMatch(text, BRANCH_RE) ?? info.branch;
-      if (!info.cwd) info.cwd = unjson((CWD_RE.exec(text) || [])[1] || '');
-      info.hasMessages = info.hasMessages || text.includes('"type":"user"');
-      Object.assign(info, usage.scan(text));
-      subagents.scanText(info, text); // subagent completions, for subagents.update()
-    } finally {
-      await fh.close();
-    }
-  }
-  c.info.mtime = st.mtimeMs;
-  return c.info;
-}
-
 async function scan() {
   const files = [];
   for (const dir of await projectDirs()) {
@@ -161,7 +97,7 @@ async function scan() {
       if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
     }
   }
-  const infos = await Promise.all(files.map((f) => readSession(f).catch(() => undefined)));
+  const infos = await Promise.all(files.map((f) => transcripts.readSession(f).catch(() => undefined)));
   sessions = new Map(infos.filter((s) => s && s.hasMessages).map((s) => [s.id, s]));
 }
 
@@ -292,11 +228,7 @@ function trackRemembered() {
 // ---------------------------------------------------------------- terminals
 
 function titleOf(id) {
-  const s = sessions.get(id) || {};
-  const p = prefs()[id] || {};
-  const l = live.get(id);
-  const liveName = l?.nameSource === 'user' ? l.name : undefined;
-  return p.alias || s.name || liveName || s.customTitle || s.aiTitle || s.lastPrompt || id.slice(0, 8);
+  return transcripts.pickTitle(id, { alias: prefs()[id]?.alias, session: sessions.get(id), live: live.get(id) });
 }
 
 const colorOf = (id) => prefs()[id]?.color || sessions.get(id)?.color;

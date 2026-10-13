@@ -1,0 +1,10 @@
+{"kind":"prompt","role":"user","text":"hello","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"reply","role":"assistant","text":"hi","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"prompt","role":"user","text":"list the files","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"reply","role":"assistant","text":"a.txt b.txt","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"prompt","role":"user","text":"open a.txt","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"reply","role":"assistant","text":"it says hi","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"prompt","role":"user","text":"thanks","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"reply","role":"assistant","text":"you're welcome","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"prompt","role":"user","text":"bye","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
+{"kind":"reply","role":"assistant","text":"bye","sessionId":"7a1b2c3d-0000-4000-8000-000000000003"}
