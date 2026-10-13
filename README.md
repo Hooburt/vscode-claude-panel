@@ -7,6 +7,8 @@ A VS Code panel for Claude Code sessions you run in the terminal.
 - **Live status**: *Working*, *Idle*, or *Done* (finished while you were looking at something else, which also
   gives a notification, a badge on the panel icon, and a bell in the status bar).
   Sessions you started by hand in a terminal are picked up too.
+- **Current session**: the one whose terminal is active is framed, with a ring round its dot (fainter while
+  you're in a file).
 - **Open several at once**: tick them and press *Open N*. Each opens in its own terminal named and coloured
   like the session. Clicking an open session jumps to its terminal instead of opening it twice.
 - **Remembers what was open**: after a restart it offers to reopen them (notification and a banner in the panel).
@@ -16,7 +18,7 @@ A VS Code panel for Claude Code sessions you run in the terminal.
 - `⋯` menu: rename, colour, pin, hide, fork, open the transcript, copy the id or resume command.
 - **Subagents**: a session that spawned agents shows *› N agents · M running*; expand it to list them
   (running ones with elapsed time, finished ones from the last few hours, *Show older* for the rest).
-  Click one to open its transcript. Running agents also show in the status pill (*Working · 2 agents*).
+  Green dots are running, grey done, red failed, hollow stopped. Click one to open its transcript. Running agents also show in the status pill (*Working · 2 agents*).
 
 How it knows what's running: Claude Code writes `~/.claude/sessions/<pid>.json` for every live session
 (id, name, busy/idle). The panel matches those processes to this window's terminals. Past sessions come from

@@ -566,8 +566,19 @@ async function quickPickResume() {
 
 // ---------------------------------------------------------------- panel
 
+// The session whose terminal is VS Code's active one, and whether it's in front: activeTerminal stays set
+// when you move to a file, so a terminal tab that isn't the active tab of the active group is 'behind'.
+function currentSession() {
+  const t = vscode.window.activeTerminal;
+  const id = t && [...live].find(([, e]) => e.terminal === t)?.[0];
+  if (!id) return {};
+  const tab = vscode.window.tabGroups.all.flatMap((g) => g.tabs).find((x) => isTerminalTab(x) && x.label === t.name);
+  return { id, behind: !!tab && !(tab.isActive && tab.group.isActive) };
+}
+
 function payload() {
   const all = prefs();
+  const current = currentSession();
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const recent = [...sessions.values()].sort((a, b) => b.mtime - a.mtime).slice(0, cfg().get('maxRecent'));
   const ids = new Set(recent.map((s) => s.id));
@@ -594,6 +605,7 @@ function payload() {
       status: l?.status || '',
       waitingFor: l?.status === 'waiting' ? l.waitingFor || '' : '',
       unread: unread.has(id),
+      current: id === current.id ? (current.behind ? 'behind' : 'front') : '',
       ctx: usage.forPayload(s, cfg().get('contextWindow')), // [tokens in use, window size]
       agents: subagents.get(id),
     };
@@ -723,8 +735,9 @@ function activate(ctx) {
     vscode.commands.registerCommand('claudeSessions.moveToSplit', moveSessionsToSplit),
     vscode.window.tabGroups.onDidChangeTabs((e) => {
       keepFilesLeft(e);
-      refresh(); // tab order drives ⌘1…⌘9
+      refresh(); // tab order drives ⌘1…⌘9, the active tab the current session
     }),
+    vscode.window.tabGroups.onDidChangeTabGroups(refresh), // moving between the file and terminal groups
     ...Array.from({ length: 9 }, (_, i) =>
       vscode.commands.registerCommand(`claudeSessions.focus${i + 1}`, () => focusSlot(i + 1))
     ),

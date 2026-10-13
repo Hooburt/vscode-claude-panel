@@ -10,6 +10,7 @@
   --muted-dot: var(--vscode-disabledForeground, rgba(128, 128, 128, 0.6));
   --warn: var(--vscode-editorWarning-foreground, #cca700);
   --busy: var(--vscode-progressBar-background, var(--accent));
+  --running: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #73c991)); /* subagents at work */
   --radius: 6px;
 }
 
@@ -369,6 +370,33 @@ body.skipping .switch-label {
   background: color-mix(in srgb, var(--c) 16%, transparent);
 }
 
+/* The session whose terminal is the active one: a hairline frame in the session's colour, a stronger tint and
+   a ring round its dot. 'behind' when that terminal isn't in front (you moved to a file). */
+.card.current {
+  background: color-mix(in srgb, var(--c) 14%, var(--vscode-sideBar-background, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent);
+}
+
+.card.current:hover {
+  background: color-mix(in srgb, var(--c) 20%, var(--vscode-sideBar-background, transparent));
+}
+
+.card.current.behind {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 28%, transparent);
+}
+
+.card.current::before {
+  width: 4px;
+}
+
+.card.current .live-dot {
+  box-shadow: 0 0 0 2px var(--vscode-sideBar-background, transparent), 0 0 0 3.5px var(--fg);
+}
+
+.card.current.behind .live-dot {
+  box-shadow: 0 0 0 2px var(--vscode-sideBar-background, transparent), 0 0 0 3.5px var(--muted);
+}
+
 .check {
   flex: none;
   display: grid;
@@ -511,7 +539,7 @@ body.skipping .switch-label {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--busy);
+  background: var(--running);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
@@ -571,8 +599,12 @@ body.skipping .switch-label {
 /* Session colours. Classes, not inline styles: the webview's CSP blocks style attributes. */
 .c-none { --c: var(--muted-dot); }
 .c-red { --c: var(--vscode-terminal-ansiRed); }
-.c-orange { --c: var(--vscode-terminal-ansiYellow); }
+/* Dark themes' yellow is far brighter than their other ANSI colours; pulled toward the background it sits with
+   them. Light themes' yellow is already a dull olive. */
+.c-orange,
 .c-yellow { --c: var(--vscode-terminal-ansiYellow); }
+.vscode-dark .c-orange,
+.vscode-dark .c-yellow { --c: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 72%, var(--vscode-sideBar-background, transparent)); }
 .c-green { --c: var(--vscode-terminal-ansiGreen); }
 .c-cyan { --c: var(--vscode-terminal-ansiCyan); }
 .c-blue { --c: var(--vscode-terminal-ansiBlue); }
@@ -766,12 +798,8 @@ body.skipping .switch-label {
 }
 
 .a-run .agent-dot {
-  background: var(--busy);
+  background: var(--running);
   animation: pulse 1.2s ease-in-out infinite;
-}
-
-.a-done .agent-dot {
-  background: var(--vscode-testing-iconPassed, var(--muted-dot));
 }
 
 .a-failed .agent-dot {

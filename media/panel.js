@@ -331,9 +331,10 @@
       ? `<span class="check live" title="Open in this window"><span class="live-dot"></span></span>`
       : `<label class="check" title="Select"><input type="checkbox" ${selected ? 'checked' : ''} aria-label="Select ${esc(s.title)}"></label>`;
     return `
-      <div class="card c-${color}${s.open ? ' open' : ''}${selected ? ' selected' : ''}${s.unread ? ' unread' : ''}"
+      <div class="card c-${color}${s.open ? ' open' : ''}${selected ? ' selected' : ''}${s.unread ? ' unread' : ''}${s.current ? ` current ${s.current}` : ''}"
            role="listitem" tabindex="0" data-id="${esc(s.id)}" data-act="open"
-           title="${s.open ? 'Show terminal' : 'Resume in a new terminal'}">
+           title="${s.current ? 'Current terminal' : s.open ? 'Show terminal' : 'Resume in a new terminal'}"
+           ${s.current ? 'aria-current="true"' : ''}>
         ${check}
         <div class="body">
           <div class="row1">
