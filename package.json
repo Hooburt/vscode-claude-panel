@@ -2,15 +2,55 @@
   "name": "claude-sessions",
   "displayName": "Claude Sessions",
   "description": "A panel for your Claude Code terminal sessions: see what's running, open several at once in named, coloured terminals, and reopen them after a restart.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "bkaluza",
-  "license": "UNLICENSED",
+  "author": {
+    "name": "Bostjan Kaluza"
+  },
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1A1C24",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bkaluza/vscode-claude-panel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bkaluza/vscode-claude-panel/issues"
+  },
+  "homepage": "https://github.com/bkaluza/vscode-claude-panel#readme",
+  "keywords": [
+    "claude",
+    "claude code",
+    "sessions",
+    "terminal",
+    "ai",
+    "agents"
+  ],
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.106.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode the panel works, but the workspace can't change the command that starts Claude Code, its extra arguments, or switch on --dangerously-skip-permissions: those settings are only read from your user settings.",
+      "restrictedConfigurations": [
+        "claudeSessions.command",
+        "claudeSessions.extraArgs",
+        "claudeSessions.skipPermissions"
+      ]
+    },
+    "virtualWorkspaces": false
+  },
   "main": "./extension.js",
   "scripts": {
     "test": "node --test test/*.test.js"

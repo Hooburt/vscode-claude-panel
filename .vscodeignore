@@ -1,3 +1,11 @@
-*.vsix
-.gitignore
+# Only the extension itself goes into the .vsix: *.js at the root, media/, README, CHANGELOG, LICENSE.
 .git/**
+.github/**
+.gitignore
+.vscodeignore
+test/**
+docs/**
+**/*.vsix
+**/.DS_Store
+node_modules/**
+package-lock.json
