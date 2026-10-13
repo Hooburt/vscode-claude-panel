@@ -28,6 +28,7 @@
     close: '<path d="M4 4l8 8M12 4l-8 8"/>',
     chevron: '<path d="M6 4l4 4-4 4"/>',
     history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v2.5H5"/><path d="M8 5v3l2 1.5"/>',
+    info: '<circle cx="8" cy="8" r="5.75"/><path d="M8 7.25v3.5"/><circle cx="8" cy="5.25" r=".5" fill="currentColor"/>',
   };
   const icon = (name) =>
     `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -184,6 +185,10 @@
       case 'dismissLast':
         vscode.postMessage({ type: 'dismissLast' });
         break;
+      case 'splitTipUse':
+      case 'splitTipDismiss':
+        vscode.postMessage({ type: 'splitTip', use: el.dataset.act === 'splitTipUse' });
+        break;
     }
   });
 
@@ -313,9 +318,9 @@
       </div>`;
   }
 
-  // ⌘1…⌘9 jump to the first nine open sessions, in openOrder.
+  // ⌘1…⌘9 jump to the first nine open sessions, in openOrder (unless claudeSessions.sessionShortcuts is off).
   function slotHint(s) {
-    const i = s.open ? state.openOrder.indexOf(s.id) : -1;
+    const i = s.open && state.shortcuts ? state.openOrder.indexOf(s.id) : -1;
     return i >= 0 && i < 9 ? `<kbd class="slot" title="Press ${esc(state.mod)}${i + 1} to switch here">${esc(state.mod)}${i + 1}</kbd>` : '';
   }
 
@@ -397,9 +402,28 @@
       ui.selected = ui.selected.filter((id) => byId.has(id) && !byId.get(id).open);
     }
 
+    // Claude Code's files didn't look as expected: say so, quietly.
+    const notice = state.notice
+      ? `<div class="notice" role="status">${icon('info')}<span>${esc(state.notice)}</span></div>`
+      : '';
+
+    // One-time tip while terminals open in the panel by default.
+    const tip = state.splitTip
+      ? `<div class="banner tip">
+          <div class="banner-text">
+            <strong>Tip: sessions beside your files</strong>
+            <span class="wrap">Open session terminals as tabs in a right-hand editor group, with files on the left.</span>
+          </div>
+          <div class="banner-actions">
+            <button class="btn primary" data-act="splitTipUse">Use split layout</button>
+            <button class="icon-btn" data-act="splitTipDismiss" title="Dismiss">${icon('close')}</button>
+          </div>
+        </div>`
+      : '';
+
     // Banner: sessions that were open last time and aren't yet.
     const reopen = state.reopen;
-    $('banner').innerHTML = reopen.length
+    $('banner').innerHTML = notice + (reopen.length
       ? `<div class="banner">
           <div class="banner-text">
             <strong>${reopen.length} session${reopen.length > 1 ? 's were' : ' was'} open last time</strong>
@@ -411,7 +435,7 @@
             <button class="icon-btn" data-act="dismissLast" title="Forget">${icon('close')}</button>
           </div>
         </div>`
-      : '';
+      : '') + tip;
 
     $('selbar').innerHTML = ui.selected.length
       ? `<div class="selbar">

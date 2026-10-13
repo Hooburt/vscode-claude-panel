@@ -17,6 +17,10 @@ const POLL_MS = 2000;
 
 const REMEMBERED_KEY = 'claudeSessions.open'; // workspaceState: ordered ids open in this window
 const PREFS_KEY = 'claudeSessions.prefs'; // globalState: { [id]: { pinned, hidden, alias, color } }
+const SLOT_KEYS_DECLINED_KEY = 'claudeSessions.slotKeysDeclined'; // globalState: "Not now" to commandsToSkipShell
+const SPLIT_TIP_KEY = 'claudeSessions.splitTipShown'; // globalState: the split-layout tip was answered
+const SLOT_COMMANDS = Array.from({ length: 9 }, (_, i) => `claudeSessions.focus${i + 1}`);
+const MOD_KEY = process.platform === 'darwin' ? 'Cmd' : 'Ctrl';
 
 // Claude Code's /color names → terminal theme colours.
 const COLORS = {
@@ -50,6 +54,13 @@ const termMisses = new Map();
 const unread = new Set();
 let polling = false;
 let lastPayload = '';
+/** every transcript the last scan read, and what the live records looked like: for formatNotice */
+let scanned = [];
+let liveFormat = {};
+/** consecutive polls on which Claude Code's files didn't look as expected, and the notice once that has held */
+let formatMisses = 0;
+let formatNotice = '';
+let slotKeysAsked = false;
 
 const cfg = () => vscode.workspace.getConfiguration('claudeSessions');
 const prefs = () => context.globalState.get(PREFS_KEY, {});
@@ -98,7 +109,8 @@ async function scan() {
     }
   }
   const infos = await Promise.all(files.map((f) => transcripts.readSession(f).catch(() => undefined)));
-  sessions = new Map(infos.filter((s) => s && s.hasMessages).map((s) => [s.id, s]));
+  scanned = infos.filter(Boolean);
+  sessions = new Map(scanned.filter((s) => s.hasMessages).map((s) => [s.id, s]));
 }
 
 // ---------------------------------------------------------------- live sessions
@@ -115,13 +127,18 @@ function alive(pid) {
 async function readLive() {
   const files = await fs.promises.readdir(LIVE_DIR).catch(() => []);
   const out = [];
+  const format = { parsed: 0, ok: 0, version: '' };
   for (const f of files) {
     if (!f.endsWith('.json')) continue;
     try {
       const d = JSON.parse(await fs.promises.readFile(path.join(LIVE_DIR, f), 'utf8'));
+      format.parsed++;
+      if (transcripts.isLiveRecord(d)) format.ok++;
+      if (typeof d.version === 'string') format.version ||= d.version;
       if (d.sessionId && d.pid && alive(d.pid)) out.push(d);
     } catch {}
   }
+  liveFormat = format;
   return out;
 }
 
@@ -300,14 +317,40 @@ function focusSlot(n) {
   if (id) resume(id);
 }
 
+const slotKeysOn = () => cfg().get('sessionShortcuts') !== false;
+
 // Keybindings for extension commands are sent to the shell while a terminal has focus, unless the
-// command is listed in terminal.integrated.commandsToSkipShell.
+// command is listed in terminal.integrated.commandsToSkipShell. That's the user's setting, so we ask first.
+function slotKeysMissing() {
+  const list = vscode.workspace.getConfiguration('terminal.integrated').get('commandsToSkipShell') || [];
+  return SLOT_COMMANDS.filter((c) => !list.includes(c));
+}
+
 function letSlotKeysThroughTerminal() {
   const conf = vscode.workspace.getConfiguration('terminal.integrated');
-  const list = conf.get('commandsToSkipShell') || [];
-  const ours = Array.from({ length: 9 }, (_, i) => `claudeSessions.focus${i + 1}`);
-  const missing = ours.filter((c) => !list.includes(c));
-  if (missing.length) conf.update('commandsToSkipShell', [...list, ...missing], vscode.ConfigurationTarget.Global);
+  const list = conf.inspect('commandsToSkipShell')?.globalValue || [];
+  const missing = SLOT_COMMANDS.filter((c) => !list.includes(c));
+  return missing.length && conf.update('commandsToSkipShell', [...list, ...missing], vscode.ConfigurationTarget.Global);
+}
+
+// Once per window, and never again after "Not now" (the command does it later).
+async function offerSlotKeysInTerminal() {
+  if (slotKeysAsked || !slotKeysOn() || context.globalState.get(SLOT_KEYS_DECLINED_KEY) || !slotKeysMissing().length) return;
+  slotKeysAsked = true;
+  const choice = await vscode.window.showInformationMessage(
+    `Claude Sessions: ${MOD_KEY}+1–9 switch between open sessions. To make them work while a terminal has focus too, ` +
+      'add the nine switch commands to your terminal.integrated.commandsToSkipShell setting?',
+    'Allow',
+    'Not now'
+  );
+  if (choice === 'Allow') await letSlotKeysThroughTerminal();
+  else if (choice === 'Not now') await context.globalState.update(SLOT_KEYS_DECLINED_KEY, true);
+}
+
+async function enableSlotKeysInTerminal() {
+  await letSlotKeysThroughTerminal();
+  if (!slotKeysOn()) await cfg().update('sessionShortcuts', true, vscode.ConfigurationTarget.Global);
+  vscode.window.showInformationMessage(`${MOD_KEY}+1–9 now switch Claude sessions from terminals too.`);
 }
 
 // Moves the Claude terminals of this window into the right-hand editor group.
@@ -498,6 +541,14 @@ async function quickPickResume() {
 
 // ---------------------------------------------------------------- panel
 
+// Terminals open in the panel by default. Once you have a session open there, the panel offers the split layout,
+// once: only while the setting is untouched, so anyone who has chosen a location never sees it.
+function showSplitTip(anyOpen) {
+  if (!anyOpen || context.globalState.get(SPLIT_TIP_KEY)) return false;
+  const i = cfg().inspect('terminalLocation') || {};
+  return i.globalValue === undefined && i.workspaceValue === undefined && i.workspaceFolderValue === undefined;
+}
+
 // The session whose terminal is VS Code's active one, and whether it's in front: activeTerminal stays set
 // when you move to a file, so a terminal tab that isn't the active tab of the active group is 'behind'.
 function currentSession() {
@@ -546,6 +597,9 @@ function payload() {
     sessions: list,
     openOrder: sessionOrder(),
     mod: process.platform === 'darwin' ? '⌘' : 'Ctrl+',
+    shortcuts: slotKeysOn(), // ⌘N hints
+    splitTip: showSplitTip(list.some((s) => s.open)),
+    notice: formatNotice, // Claude Code's files didn't look as expected
     reopen: notReopened().map((id) => ({ id, title: titleOf(id) })),
     skipPermissions: !!cfg().get('skipPermissions'),
   };
@@ -578,6 +632,9 @@ async function tick() {
     await scan();
     await pollLive();
     await subagents.update(sessions, live);
+    const n = transcripts.formatNotice(liveFormat, scanned);
+    formatMisses = n ? formatMisses + 1 : 0;
+    formatNotice = formatMisses >= 3 ? n : ''; // not for a record caught mid-write
     refresh();
   } catch (e) {
     console.error('[claude-sessions]', e);
@@ -641,6 +698,9 @@ async function handleMessage(m) {
       return restoreLast();
     case 'dismissLast':
       return setRemembered(remembered().filter((id) => live.get(id)?.terminal)).then(refresh);
+    case 'splitTip':
+      if (m.use) await cfg().update('terminalLocation', 'split', vscode.ConfigurationTarget.Global);
+      return context.globalState.update(SPLIT_TIP_KEY, true).then(refresh);
     case 'skipPermissions':
       return cfg().update('skipPermissions', !!m.value, vscode.ConfigurationTarget.Global);
   }
@@ -665,6 +725,7 @@ function activate(ctx) {
       vscode.commands.executeCommand('claudeSessions.panel.focus')
     ),
     vscode.commands.registerCommand('claudeSessions.moveToSplit', moveSessionsToSplit),
+    vscode.commands.registerCommand('claudeSessions.enableSlotKeysInTerminal', enableSlotKeysInTerminal),
     vscode.window.tabGroups.onDidChangeTabs((e) => {
       keepFilesLeft(e);
       refresh(); // tab order drives ⌘1…⌘9, the active tab the current session
@@ -695,13 +756,14 @@ function activate(ctx) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration('claudeSessions')) return;
       if (e.affectsConfiguration('claudeSessions.terminalLocation') && splitMode()) moveSessionsToSplit();
+      if (e.affectsConfiguration('claudeSessions.sessionShortcuts')) offerSlotKeysInTerminal();
       refresh();
     })
   );
 
   const timer = setInterval(tick, POLL_MS);
   ctx.subscriptions.push({ dispose: () => clearInterval(timer) });
-  letSlotKeysThroughTerminal();
+  offerSlotKeysInTerminal();
   tick().then(restoreOnStartup);
 }
 

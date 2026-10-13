@@ -256,6 +256,31 @@ body.skipping .switch-label {
   margin-left: auto;
 }
 
+.banner.tip {
+  border-left-color: var(--border);
+}
+
+.banner-text span.wrap {
+  white-space: normal;
+}
+
+/* Claude Code's files didn't look as expected: a quiet line, not a banner. */
+.notice {
+  margin: 10px 12px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.notice .i {
+  width: 13px;
+  height: 13px;
+  margin-top: 1px;
+  color: var(--warn);
+}
+
 .selbar {
   padding: 6px 6px 6px 10px;
   border-radius: var(--radius);
