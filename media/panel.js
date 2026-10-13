@@ -1,4 +1,4 @@
-// Claude Sessions panel. Renders the state the extension posts; every action goes back as a message.
+// Session Panel webview. Renders the state the extension posts; every action goes back as a message.
 (function () {
   const vscode = acquireVsCodeApi();
   const ui = Object.assign({ filter: '', selected: [], collapsed: { hidden: true } }, vscode.getState() || {});

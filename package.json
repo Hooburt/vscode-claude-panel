@@ -1,6 +1,6 @@
 {
   "name": "claude-sessions",
-  "displayName": "Claude Sessions",
+  "displayName": "Session Panel for Claude Code",
   "description": "A panel for your Claude Code terminal sessions: see what's running, open several at once in named, coloured terminals, and reopen them after a restart.",
   "version": "0.7.0",
   "publisher": "bkaluza",
@@ -63,7 +63,7 @@
       "secondarySidebar": [
         {
           "id": "claudeSessions",
-          "title": "Claude Sessions",
+          "title": "Session Panel",
           "icon": "media/icon.svg"
         }
       ]
@@ -81,84 +81,84 @@
       {
         "command": "claudeSessions.resume",
         "title": "Resume Sessions…",
-        "category": "Claude Sessions",
+        "category": "Session Panel",
         "icon": "$(history)"
       },
       {
         "command": "claudeSessions.new",
         "title": "New Session…",
-        "category": "Claude Sessions",
+        "category": "Session Panel",
         "icon": "$(add)"
       },
       {
         "command": "claudeSessions.restore",
         "title": "Reopen Last Sessions",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.toggleSkipPermissions",
         "title": "Toggle Skip Permissions",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.showPanel",
         "title": "Show Panel",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.moveToSplit",
         "title": "Move Open Sessions to the Right Editor Group",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.enableSlotKeysInTerminal",
         "title": "Enable Cmd+1–9 in Terminals",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus1",
         "title": "Switch to Open Session 1",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus2",
         "title": "Switch to Open Session 2",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus3",
         "title": "Switch to Open Session 3",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus4",
         "title": "Switch to Open Session 4",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus5",
         "title": "Switch to Open Session 5",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus6",
         "title": "Switch to Open Session 6",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus7",
         "title": "Switch to Open Session 7",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus8",
         "title": "Switch to Open Session 8",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       },
       {
         "command": "claudeSessions.focus9",
         "title": "Switch to Open Session 9",
-        "category": "Claude Sessions"
+        "category": "Session Panel"
       }
     ],
     "keybindings": [
@@ -242,7 +242,7 @@
       ]
     },
     "configuration": {
-      "title": "Claude Sessions",
+      "title": "Session Panel",
       "properties": {
         "claudeSessions.skipPermissions": {
           "type": "boolean",
@@ -285,7 +285,7 @@
         "claudeSessions.sessionShortcuts": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Cmd+1 … Cmd+9 (Ctrl on Windows/Linux) switch to open session 1–9 while a terminal or the panel has focus. To work in terminals they need to be in `#terminal.integrated.commandsToSkipShell#`: the extension asks once, or run **Claude Sessions: Enable Cmd+1–9 in Terminals**."
+          "markdownDescription": "Cmd+1 … Cmd+9 (Ctrl on Windows/Linux) switch to open session 1–9 while a terminal or the panel has focus. To work in terminals they need to be in `#terminal.integrated.commandsToSkipShell#`: the extension asks once, or run **Session Panel: Enable Cmd+1–9 in Terminals**."
         },
         "claudeSessions.restoreOnStartup": {
           "type": "string",

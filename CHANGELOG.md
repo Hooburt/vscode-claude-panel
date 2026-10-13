@@ -4,12 +4,15 @@
 
 Getting ready for the Marketplace and Open VSX.
 
+- **Renamed to Session Panel for Claude Code** (was *Claude Sessions*). The extension ID and the
+  `claudeSessions.*` settings are unchanged, so pins, names, colours and remembered sessions carry over.
+
 - **Terminals open in the terminal panel by default** (`claudeSessions.terminalLocation: "panel"`). The split
   layout (session terminals as tabs in a right-hand editor group, files on the left) is one click away: the
   panel offers it once, or set `"split"`. If you relied on the old default, set it explicitly.
 - **Cmd+1–9 no longer edits your settings silently.** To work while a terminal has focus they must be listed in
   `terminal.integrated.commandsToSkipShell`; the extension now asks once (*Allow* / *Not now*), and
-  *Claude Sessions: Enable Cmd+1–9 in Terminals* does it later.
+  *Session Panel: Enable Cmd+1–9 in Terminals* does it later.
 - New setting `claudeSessions.sessionShortcuts` turns Cmd+1–9 (and the ⌘N hints) off.
 - Respects `CLAUDE_CONFIG_DIR` (falls back to `~/.claude`).
 - If a Claude Code update changes its session files beyond recognition, the panel says so instead of

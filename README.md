@@ -1,4 +1,4 @@
-# Claude Sessions
+# Session Panel for Claude Code
 
 A VS Code panel for the [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) sessions you run in
 the terminal: see what's running and what's waiting for you, open several sessions at once in named, coloured
@@ -6,7 +6,7 @@ terminals, and reopen them after a restart.
 
 > Not affiliated with or endorsed by Anthropic. Claude is a trademark of Anthropic.
 
-<img src="https://raw.githubusercontent.com/bkaluza/vscode-claude-panel/main/docs/screenshot.png" alt="The Claude Sessions panel: open sessions with live status, subagents and context usage, then sessions running elsewhere, pinned, and by day" width="380">
+<img src="https://raw.githubusercontent.com/bkaluza/vscode-claude-panel/main/docs/screenshot.png" alt="The Session Panel: open sessions with live status, subagents and context usage, then sessions running elsewhere, pinned, and by day" width="380">
 
 ## What it does
 
@@ -46,7 +46,7 @@ code --install-extension claude-sessions-0.7.0.vsix
 
 VS Code sends keys to the shell while a terminal has focus unless the command is listed in
 `terminal.integrated.commandsToSkipShell`. The first time, the extension asks before adding its nine switch
-commands there. If you said *Not now*, run **Claude Sessions: Enable Cmd+1–9 in Terminals** later. To turn the
+commands there. If you said *Not now*, run **Session Panel: Enable Cmd+1–9 in Terminals** later. To turn the
 keys off entirely, set `claudeSessions.sessionShortcuts` to `false`.
 
 ## Settings

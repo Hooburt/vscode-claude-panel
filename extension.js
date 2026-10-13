@@ -1,4 +1,4 @@
-// Claude Sessions: a panel for Claude Code terminal sessions — what's running, what's done,
+// Session Panel for Claude Code: a panel for Claude Code terminal sessions — what's running, what's done,
 // open several at once in named, coloured terminals, and reopen them after a restart.
 const vscode = require('vscode');
 const fs = require('fs');
@@ -338,7 +338,7 @@ async function offerSlotKeysInTerminal() {
   if (slotKeysAsked || !slotKeysOn() || context.globalState.get(SLOT_KEYS_DECLINED_KEY) || !slotKeysMissing().length) return;
   slotKeysAsked = true;
   const choice = await vscode.window.showInformationMessage(
-    `Claude Sessions: ${MOD_KEY}+1–9 switch between open sessions. To make them work while a terminal has focus too, ` +
+    `Session Panel: ${MOD_KEY}+1–9 switch between open sessions. To make them work while a terminal has focus too, ` +
       'add the nine switch commands to your terminal.integrated.commandsToSkipShell setting?',
     'Allow',
     'Not now'
