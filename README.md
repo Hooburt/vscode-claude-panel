@@ -100,13 +100,6 @@ npx @vscode/vsce package          # build claude-sessions-<version>.vsix
 npx @vscode/vsce ls               # what goes into it
 ```
 
-Releases are published by GitHub Actions when a `v*` tag matching `package.json`'s version is pushed
-(`.github/workflows/release.yml`). The repository needs two secrets:
-
-- `VSCE_PAT`: an Azure DevOps personal access token with the *Marketplace › Manage* scope, for the `bkaluza`
-  publisher on the VS Code Marketplace.
-- `OVSX_PAT`: an Open VSX access token, for the `bkaluza` namespace on open-vsx.org.
-
 ## License
 
 [MIT](LICENSE)

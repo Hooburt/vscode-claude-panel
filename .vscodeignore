@@ -5,6 +5,7 @@
 .vscodeignore
 test/**
 docs/**
+RELEASING.md
 **/*.vsix
 **/.DS_Store
 node_modules/**
