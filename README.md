@@ -23,8 +23,9 @@ terminals, and reopen them after a restart.
   state and elapsed time, and click one to open its transcript.
 - **Context usage**: a bar with tokens in use against the context window.
 - **Current session**: the one whose terminal is active is framed in its colour.
+- **Your order**: drag open and pinned sessions within their section, or Alt+Up / Alt+Down. Cmd+1–9 follow it.
 - **Skip permissions** switch adds `--dangerously-skip-permissions` to every launch.
-- `⋯` menu: rename, colour, pin, hide, fork, open the transcript, copy the id or the resume command.
+- `⋯` menu: rename, colour, pin, hide, move up / down, fork, open the transcript, copy the id or the resume command.
 
 The panel lives in the Secondary Side Bar (the right-hand one). **Cmd+Alt+C** (Ctrl+Alt+C) shows it.
 
@@ -33,14 +34,15 @@ The panel lives in the Secondary Side Bar (the right-hand one). **Cmd+Alt+C** (C
 From the VS Code Marketplace or Open VSX: search for *Claude Sessions*. Or from a `.vsix`:
 
 ```bash
-code --install-extension claude-sessions-0.7.0.vsix
+code --install-extension claude-sessions-0.8.0.vsix
 ```
 
 ## Keys
 
 | Key (macOS / Windows, Linux) | |
 |---|---|
-| Cmd+1 … Cmd+9 / Ctrl+1 … Ctrl+9 | Switch to open session 1–9 (in tab order; shown as ⌘N in the panel). Active while a terminal or the panel has focus, so in a file they still switch editor groups. |
+| Cmd+1 … Cmd+9 / Ctrl+1 … Ctrl+9 | Switch to open session 1–9 (in the panel's order; shown as ⌘N there). Active while a terminal or the panel has focus, so in a file they still switch editor groups. |
+| Alt+Up / Alt+Down | On a session in the panel: move it up or down within *Open in this window* or *Pinned* |
 | Cmd+Alt+C / Ctrl+Alt+C | Show the panel |
 | Cmd+Alt+R / Ctrl+Alt+R | Quick multi-select picker, without the panel |
 
@@ -76,6 +78,13 @@ you set it):
   extension matches those processes to this window's terminals.
 - `projects/<workspace path>*/<session id>.jsonl`: the transcripts, for past sessions, titles, last prompts,
   context usage, and subagents (`<session id>/subagents/`). Only newly appended lines are read.
+
+**Order.** *Open in this window* starts in terminal tab order: tabs left to right across the editor groups, then
+terminals in the terminal panel in the order they opened. Once you drag a session (or press Alt+Up/Down, or use
+*Move up / down*), that order is kept for this workspace, new sessions go to the end, and the session terminals'
+editor tabs are moved to match. Drag a terminal tab yourself and the panel follows. Terminals in the terminal
+panel can't be reordered by an extension, so only the panel's list changes for them. *Pinned* keeps the order you
+give it across workspaces; newly pinned sessions go to the end.
 
 It launches `claude --resume <id>` in terminals and writes nothing to Claude Code's files. **Nothing leaves your
 machine**: no network requests, no telemetry.

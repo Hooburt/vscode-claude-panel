@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+- **Put sessions in your own order**: drag *Open in this window* and *Pinned* sessions within their section, press
+  Alt+Up / Alt+Down on one, or use *Move up* / *Move down* in its `⋯` menu. Cmd+1–9 and the ⌘N hints follow.
+- The open order is kept per workspace, new sessions go to the end, and sessions reopened after a restart come
+  back in it. Session terminals in editor tabs are moved to match; dragging a terminal tab yourself reorders the
+  panel. Terminals in the terminal panel can't be moved by an extension, so for them only the panel changes.
+- Pinned sessions keep the order you give them; newly pinned ones go to the end (previously: most recent first).
+
 ## 0.7.0
 
 Getting ready for the Marketplace and Open VSX.

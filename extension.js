@@ -7,6 +7,7 @@ const { execFile } = require('child_process');
 const usage = require('./usage');
 const subagents = require('./subagents');
 const transcripts = require('./transcripts');
+const order = require('./order');
 
 const CLAUDE_DIR = transcripts.claudeDir(); // ~/.claude, or $CLAUDE_CONFIG_DIR
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
@@ -16,7 +17,9 @@ const SKIP_FLAG = '--dangerously-skip-permissions';
 const POLL_MS = 2000;
 
 const REMEMBERED_KEY = 'claudeSessions.open'; // workspaceState: ordered ids open in this window
+const ORDER_KEY = 'claudeSessions.order'; // workspaceState: open sessions in the order you put them in
 const PREFS_KEY = 'claudeSessions.prefs'; // globalState: { [id]: { pinned, hidden, alias, color } }
+const PIN_ORDER_KEY = 'claudeSessions.pinOrder'; // globalState: pinned ids in the order you put them in
 const SLOT_KEYS_DECLINED_KEY = 'claudeSessions.slotKeysDeclined'; // globalState: "Not now" to commandsToSkipShell
 const SPLIT_TIP_KEY = 'claudeSessions.splitTipShown'; // globalState: the split-layout tip was answered
 const SLOT_COMMANDS = Array.from({ length: 9 }, (_, i) => `claudeSessions.focus${i + 1}`);
@@ -61,10 +64,15 @@ let liveFormat = {};
 let formatMisses = 0;
 let formatNotice = '';
 let slotKeysAsked = false;
+/** while syncTabs moves terminal tabs, and the session tabs as last seen: so only your own tab drags count */
+let movingTabs = false;
+let lastTabs = [];
+let tabSync = Promise.resolve();
 
 const cfg = () => vscode.workspace.getConfiguration('claudeSessions');
 const prefs = () => context.globalState.get(PREFS_KEY, {});
 const remembered = () => context.workspaceState.get(REMEMBERED_KEY, []);
+const manualOrder = () => context.workspaceState.get(ORDER_KEY, []);
 
 function setPref(id, patch) {
   const all = prefs();
@@ -77,6 +85,28 @@ function setPref(id, patch) {
 
 function setRemembered(ids) {
   return context.workspaceState.update(REMEMBERED_KEY, [...new Set(ids)]);
+}
+
+// Pinned ids in the order you put them in, newly pinned last. Pins from before there was an order: newest first.
+function pinOrder() {
+  const all = prefs();
+  const mtime = (id) => sessions.get(id)?.mtime || 0;
+  const pinned = Object.keys(all).filter((id) => all[id].pinned).sort((a, b) => mtime(b) - mtime(a));
+  return order.arrange(context.globalState.get(PIN_ORDER_KEY, []), pinned);
+}
+
+async function setPinned(id, on) {
+  const ids = pinOrder().filter((x) => x !== id);
+  await context.globalState.update(PIN_ORDER_KEY, on ? [...ids, id] : ids);
+  return setPref(id, { pinned: on });
+}
+
+// Stores the open sessions' order. Remembered sessions not reopened yet keep their place among them.
+function setOpenOrder(ids) {
+  const stored = manualOrder();
+  const rem = remembered();
+  const all = order.arrange(stored, [...stored.filter((id) => rem.includes(id)), ...ids]);
+  return context.workspaceState.update(ORDER_KEY, order.refill(all, ids));
 }
 
 // ---------------------------------------------------------------- session files
@@ -299,17 +329,117 @@ function keepFilesLeft(e) {
   }
 }
 
-// The order ⌘1…⌘9 use: Claude terminal tabs left to right as they sit in the editor groups, then
-// any in the terminal panel in the order they were opened.
-function sessionOrder() {
+function idsByName() {
   const byName = new Map();
   for (const [id, e] of live) if (e.terminal) byName.set(e.terminal.name, id);
+  return byName;
+}
+
+// A group's tabs as session ids, null for anything that isn't a session's terminal.
+const groupTabIds = (g, byName = idsByName()) => g.tabs.map((tab) => (isTerminalTab(tab) && byName.get(tab.label)) || null);
+
+// Sessions with an editor tab, left to right across the editor groups.
+function tabSessions() {
+  const byName = idsByName();
+  return vscode.window.tabGroups.all.flatMap((g) => groupTabIds(g, byName)).filter(Boolean);
+}
+
+// The order of the open sessions in the panel and for ⌘1…⌘9: the order you put them in (dragged in the panel,
+// Alt+Up/Down, or by moving their terminal tabs), then any not in it yet: Claude terminal tabs left to right as they
+// sit in the editor groups, then those in the terminal panel in the order they were opened.
+function sessionOrder() {
   const ids = [];
   const add = (id) => id && live.get(id)?.terminal && !ids.includes(id) && ids.push(id);
-  for (const g of vscode.window.tabGroups.all) for (const tab of g.tabs) if (isTerminalTab(tab)) add(byName.get(tab.label));
+  tabSessions().forEach(add);
   remembered().forEach(add);
   [...live.keys()].forEach(add);
-  return ids;
+  return order.arrange(manualOrder(), ids);
+}
+
+// A section of the panel in a new order. `ids` are the section's sessions as the panel shows them, so maybe only
+// the ones a filter left; the rest keep their places.
+async function reorder(section, ids) {
+  if (section === 'pinned') {
+    await context.globalState.update(PIN_ORDER_KEY, order.refill(pinOrder(), ids));
+    return refresh();
+  }
+  if (section !== 'open') return;
+  await setOpenOrder(order.refill(sessionOrder(), ids));
+  refresh();
+  return (tabSync = tabSync.then(syncTabs, syncTabs));
+}
+
+// The panel section a session is in and its sessions in order, for Move up / down.
+function sectionOf(id) {
+  if (live.get(id)?.terminal) return ['open', sessionOrder()];
+  const all = prefs();
+  if (!all[id]?.pinned || live.has(id)) return [];
+  return ['pinned', pinOrder().filter((x) => x === id || (sessions.has(x) && !live.has(x) && !all[x].hidden))];
+}
+
+const ORDINALS = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth'];
+const tabKey = (tab) => tab?.input?.uri?.toString() || tab?.label;
+
+async function until(ok, ms = 1000) {
+  for (let t = 0; t < ms && !ok(); t += 25) await new Promise((r) => setTimeout(r, 25));
+  return ok();
+}
+
+// Puts the session terminals' editor tabs in the open order, group by group, moving only session tabs. VS Code
+// moves the active editor, so each terminal is shown first; afterwards every group gets its active tab back and
+// focus returns to the editor group and then the panel. Terminals in the terminal panel have no API for their
+// order and stay as they are.
+async function syncTabs() {
+  const want = sessionOrder();
+  const startGroup = vscode.window.tabGroups.activeTabGroup.viewColumn;
+  const startTerminal = vscode.window.activeTerminal;
+  const keepUnread = new Set(unread);
+  let moved = false;
+  movingTabs = true;
+  try {
+    for (const column of vscode.window.tabGroups.all.map((g) => g.viewColumn)) {
+      const group = () => vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+      const active = tabKey(group()?.activeTab);
+      let touched = false;
+      for (const [id, to] of order.tabMoves(groupTabIds(group()), want)) {
+        const t = live.get(id)?.terminal;
+        if (!t) break;
+        t.show();
+        const front = () => {
+          const g = vscode.window.tabGroups.activeTabGroup;
+          return g.viewColumn === column && isTerminalTab(g.activeTab || {}) && g.activeTab.label === t.name;
+        };
+        if (!(await until(front))) break;
+        await vscode.commands.executeCommand('moveActiveEditor', { to: 'position', by: 'tab', value: to + 1 });
+        touched = moved = true;
+      }
+      const i = touched ? group().tabs.findIndex((tab) => tabKey(tab) === active) : -1;
+      if (i >= 0) await vscode.commands.executeCommand('workbench.action.openEditorAtIndex', i);
+    }
+  } finally {
+    if (moved) {
+      const tab = vscode.window.tabGroups.all.flatMap((g) => g.tabs).find((x) => isTerminalTab(x) && x.label === startTerminal?.name);
+      if (tab?.isActive) startTerminal.show(true); // the current session stays current
+      const nth = ORDINALS[startGroup - 1];
+      if (nth) await vscode.commands.executeCommand(`workbench.action.focus${nth}EditorGroup`);
+      await vscode.commands.executeCommand('claudeSessions.panel.focus');
+    }
+    for (const id of keepUnread) if (live.get(id)?.terminal) unread.add(id); // showing a terminal isn't reading it
+    lastTabs = tabSessions();
+    movingTabs = false;
+    refresh();
+  }
+}
+
+// You moved a session's terminal tab yourself: the open order follows the tabs. Until there is a manual order the
+// tab order is used anyway; our own moves don't count.
+function followTabs() {
+  if (movingTabs) return;
+  const now = tabSessions();
+  const before = lastTabs;
+  lastTabs = now;
+  if (!manualOrder().length || !order.reordered(before, now)) return;
+  setOpenOrder(order.refill(sessionOrder(), now)).then(refresh);
 }
 
 function focusSlot(n) {
@@ -446,8 +576,9 @@ async function moreActions(id) {
   const items = [
     { label: '$(edit) Rename…', run: renameSession },
     { label: '$(symbol-color) Colour…', run: recolorSession },
-    { label: p.pinned ? '$(pinned) Unpin' : '$(pin) Pin', run: () => setPref(id, { pinned: !p.pinned }) },
+    { label: p.pinned ? '$(pinned) Unpin' : '$(pin) Pin', run: () => setPinned(id, !p.pinned) },
     { label: p.hidden ? '$(eye) Unhide' : '$(eye-closed) Hide', run: () => setPref(id, { hidden: !p.hidden }) },
+    ...moveItems(id),
     { label: '', kind: vscode.QuickPickItemKind.Separator },
     {
       label: skip ? '$(shield) Resume asking for permissions' : '$(warning) Resume skipping permissions',
@@ -466,6 +597,17 @@ async function moreActions(id) {
   return pick?.run?.(id);
 }
 
+// Move up / down within the session's section, where it has somewhere to go (Alt+Up/Down in the panel).
+function moveItems(id) {
+  const [section, ids] = sectionOf(id);
+  const i = ids ? ids.indexOf(id) : -1;
+  const item = (label, by) => ({ label, run: () => reorder(section, order.move(ids, id, by)) });
+  return [
+    ...(i > 0 ? [item('$(arrow-up) Move up', -1)] : []),
+    ...(i >= 0 && i < ids.length - 1 ? [item('$(arrow-down) Move down', 1)] : []),
+  ];
+}
+
 async function renameSession(id) {
   const name = await vscode.window.showInputBox({
     title: 'Rename session',
@@ -482,7 +624,7 @@ async function recolorSession(id) {
   return setPref(id, { color: color || undefined });
 }
 
-const notReopened = () => remembered().filter((id) => !live.get(id)?.terminal && sessions.has(id));
+const notReopened = () => order.arrange(manualOrder(), remembered()).filter((id) => !live.get(id)?.terminal && sessions.has(id));
 
 async function restoreLast() {
   const ids = notReopened();
@@ -596,6 +738,7 @@ function payload() {
   return {
     sessions: list,
     openOrder: sessionOrder(),
+    pinOrder: pinOrder().filter((id) => ids.has(id)),
     mod: process.platform === 'darwin' ? '⌘' : 'Ctrl+',
     shortcuts: slotKeysOn(), // ⌘N hints
     splitTip: showSplitTip(list.some((s) => s.open)),
@@ -685,7 +828,9 @@ async function handleMessage(m) {
     case 'refresh':
       return tick();
     case 'pin':
-      return setPref(m.id, { pinned: !prefs()[m.id]?.pinned });
+      return setPinned(m.id, !prefs()[m.id]?.pinned);
+    case 'reorder':
+      return reorder(m.section, m.ids);
     case 'unhide':
       return setPref(m.id, { hidden: false });
     case 'more':
@@ -728,6 +873,7 @@ function activate(ctx) {
     vscode.commands.registerCommand('claudeSessions.enableSlotKeysInTerminal', enableSlotKeysInTerminal),
     vscode.window.tabGroups.onDidChangeTabs((e) => {
       keepFilesLeft(e);
+      followTabs();
       refresh(); // tab order drives ⌘1…⌘9, the active tab the current session
     }),
     vscode.window.tabGroups.onDidChangeTabGroups(refresh), // moving between the file and terminal groups
@@ -750,7 +896,7 @@ function activate(ctx) {
     }),
     vscode.window.onDidOpenTerminal(() => setTimeout(tick, 1500)),
     vscode.window.onDidChangeActiveTerminal((t) => {
-      for (const [id, e] of live) if (e.terminal === t) unread.delete(id);
+      if (!movingTabs) for (const [id, e] of live) if (e.terminal === t) unread.delete(id);
       refresh();
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {

@@ -2,8 +2,10 @@
 (function () {
   const vscode = acquireVsCodeApi();
   const ui = Object.assign({ filter: '', selected: [], collapsed: { hidden: true } }, vscode.getState() || {});
-  let state = { sessions: [], reopen: [], openOrder: [], skipPermissions: false };
+  let state = { sessions: [], reopen: [], openOrder: [], pinOrder: [], skipPermissions: false };
   let loaded = false; // until the first state arrives, keep the saved selection
+  let drag; // { id, list } while a card is dragged; renders wait until it's dropped
+  let renderLater = false;
   ui.agents ||= {}; // session id → true (subagents expanded) or 'all' (older ones too)
 
   const COLOR_VARS = {
@@ -207,12 +209,108 @@
     else if (e.key === ' ') {
       e.preventDefault();
       card.querySelector('.check input')?.click();
+    } else if (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      const list = card.parentElement;
+      const ids = idsIn(list);
+      const i = ids.indexOf(card.dataset.id);
+      const j = i + (e.key === 'ArrowDown' ? 1 : -1);
+      if (!list.dataset.sort || j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      reorder(list.dataset.sort, ids);
     } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const cards = [...document.querySelectorAll('.card')];
       cards[cards.indexOf(card) + (e.key === 'ArrowDown' ? 1 : -1)]?.focus();
     }
   });
+
+  // ---------------------------------------------------------------- reordering
+
+  // Open and pinned sessions can be dragged within their section, or moved with Alt+Up/Down. The browser fires no
+  // click after a drag, so a drop never opens a session.
+  const idsIn = (list) => [...list.querySelectorAll(':scope > .card')].map((c) => c.dataset.id);
+
+  // order.js's refill: `order` with the places `ids` hold refilled in ids' order.
+  function refill(order, ids) {
+    const base = [...order, ...ids.filter((id) => !order.includes(id))];
+    const moving = new Set(ids);
+    let i = 0;
+    return base.map((id) => (moving.has(id) ? ids[i++] : id));
+  }
+
+  // The new order goes to the extension, and into the local state at once so the list doesn't lag behind.
+  function reorder(section, ids) {
+    const key = section === 'open' ? 'openOrder' : 'pinOrder';
+    state[key] = refill(state[key] || [], ids);
+    vscode.postMessage({ type: 'reorder', section, ids });
+    render();
+  }
+
+  // Where a drop at this height lands: before the first card whose middle is below it, or at the end (null).
+  function dropTarget(list, y) {
+    return (
+      [...list.querySelectorAll(':scope > .card')].find((c) => {
+        const r = c.getBoundingClientRect();
+        return y < r.top + r.height / 2;
+      }) || null
+    );
+  }
+
+  function clearDrop() {
+    for (const el of document.querySelectorAll('.drop-before, .drop-after')) el.classList.remove('drop-before', 'drop-after');
+  }
+
+  // A line where the card would land; none where dropping wouldn't move it.
+  function showDrop(list, target) {
+    clearDrop();
+    const cards = [...list.querySelectorAll(':scope > .card')];
+    const from = cards.findIndex((c) => c.dataset.id === drag.id);
+    const to = target ? cards.indexOf(target) : cards.length;
+    if (to === from || to === from + 1) return;
+    if (target) target.classList.add('drop-before');
+    else list.lastElementChild.classList.add('drop-after'); // the last card, or its subagent list
+  }
+
+  function endDrag() {
+    clearDrop();
+    document.querySelector('.card.dragging')?.classList.remove('dragging');
+    drag = undefined;
+    if (renderLater) render();
+  }
+
+  app.addEventListener('dragstart', (e) => {
+    const card = e.target.closest?.('.card[draggable="true"]');
+    if (!card) return;
+    drag = { id: card.dataset.id, list: card.parentElement };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', drag.id);
+    card.classList.add('dragging');
+  });
+  app.addEventListener('dragover', (e) => {
+    if (!drag) return;
+    const list = e.target.closest?.('.cards');
+    if (list !== drag.list) return clearDrop(); // other sections aren't drop targets
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    showDrop(list, dropTarget(list, e.clientY));
+  });
+  app.addEventListener('dragleave', (e) => {
+    if (drag && !e.relatedTarget?.closest?.('.cards')) clearDrop();
+  });
+  app.addEventListener('drop', (e) => {
+    const list = e.target.closest?.('.cards');
+    if (!drag || list !== drag.list) return;
+    e.preventDefault();
+    const before = dropTarget(list, e.clientY)?.dataset.id;
+    const ids = idsIn(list).filter((id) => id !== drag.id);
+    const i = before ? ids.indexOf(before) : -1;
+    ids.splice(i < 0 ? ids.length : i, 0, drag.id);
+    const section = list.dataset.sort;
+    endDrag();
+    if (ids.join() !== idsIn(list).join()) reorder(section, ids);
+  });
+  app.addEventListener('dragend', () => drag && endDrag());
 
   // ---------------------------------------------------------------- rendering
 
@@ -324,7 +422,7 @@
     return i >= 0 && i < 9 ? `<kbd class="slot" title="Press ${esc(state.mod)}${i + 1} to switch here">${esc(state.mod)}${i + 1}</kbd>` : '';
   }
 
-  function card(s) {
+  function card(s, movable) {
     const color = COLOR_VARS[s.color] ? s.color : 'none';
     const selected = ui.selected.includes(s.id);
     const meta = [
@@ -338,6 +436,7 @@
     return `
       <div class="card c-${color}${s.open ? ' open' : ''}${selected ? ' selected' : ''}${s.unread ? ' unread' : ''}${s.current ? ` current ${s.current}` : ''}"
            role="listitem" tabindex="0" data-id="${esc(s.id)}" data-act="open"
+           ${movable ? 'draggable="true" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"' : ''}
            title="${s.current ? 'Current terminal' : s.open ? 'Show terminal' : 'Resume in a new terminal'}"
            ${s.current ? 'aria-current="true"' : ''}>
         ${check}
@@ -367,6 +466,7 @@
     const collapsed = !!ui.collapsed[key];
     const selectable = items.filter((s) => !s.open).map((s) => s.id);
     const allSel = selectable.length && selectable.every((id) => ui.selected.includes(id));
+    const movable = opts.sortable && items.length > 1;
     return `
       <section class="section${opts.quiet ? ' quiet' : ''}">
         <div class="section-head">
@@ -379,7 +479,7 @@
               : ''
           }
         </div>
-        ${collapsed ? '' : `<div class="cards">${items.map(card).join('')}</div>`}
+        ${collapsed ? '' : `<div class="cards"${movable ? ` data-sort="${key}"` : ''}>${items.map((s) => card(s, movable)).join('')}</div>`}
       </section>`;
   }
 
@@ -393,6 +493,8 @@
   }
 
   function render() {
+    renderLater = !!drag; // replacing the cards mid-drag would cancel it
+    if (drag) return;
     $('skip').checked = state.skipPermissions;
     document.body.classList.toggle('skipping', state.skipPermissions);
     $('clearFilter').hidden = !ui.filter;
@@ -448,16 +550,18 @@
 
     const q = ui.filter.trim();
     const list = state.sessions.filter((s) => matches(s, q));
-    const order = (id) => {
-      const i = state.openOrder.indexOf(id);
+    const rank = (order) => (id) => {
+      const i = (order || []).indexOf(id);
       return i < 0 ? 1e9 : i;
     };
+    const openRank = rank(state.openOrder);
+    const pinRank = rank(state.pinOrder);
     const byTime = (a, b) => b.mtime - a.mtime;
 
-    const open = list.filter((s) => s.open).sort((a, b) => order(a.id) - order(b.id) || byTime(a, b));
+    const open = list.filter((s) => s.open).sort((a, b) => openRank(a.id) - openRank(b.id) || byTime(a, b));
     const elsewhere = list.filter((s) => s.elsewhere).sort(byTime);
     const rest = list.filter((s) => !s.open && !s.elsewhere);
-    const pinned = rest.filter((s) => s.pinned && (!s.hidden || q)).sort(byTime);
+    const pinned = rest.filter((s) => s.pinned && (!s.hidden || q)).sort((a, b) => pinRank(a.id) - pinRank(b.id) || byTime(a, b));
     const recent = rest.filter((s) => !s.pinned && (!s.hidden || q)).sort(byTime);
     const hidden = q ? [] : rest.filter((s) => s.hidden && !s.pinned).sort(byTime);
 
@@ -465,9 +569,9 @@
     for (const s of recent) (groups[dayBucket(s.mtime)] ||= []).push(s);
 
     let html =
-      section('open', 'Open in this window', open) +
+      section('open', 'Open in this window', open, { sortable: true }) +
       section('elsewhere', 'Running elsewhere', elsewhere) +
-      section('pinned', 'Pinned', pinned) +
+      section('pinned', 'Pinned', pinned, { sortable: true }) +
       ['Today', 'Yesterday', 'This week', 'Older'].map((g) => section(`g-${g}`, g, groups[g] || [])).join('') +
       section('hidden', 'Hidden', hidden, { quiet: true });
 

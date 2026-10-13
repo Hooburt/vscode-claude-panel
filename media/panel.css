@@ -881,6 +881,38 @@ body.skipping .switch-label {
   }
 }
 
+/* ---------------------------------------------------------------- reordering */
+
+/* Open and pinned sessions are dragged within their section: the card fades and a line in the focus colour shows
+   where it will land, in the 2px gap between cards (or under the last card's subagent list). */
+.card.dragging {
+  opacity: 0.4;
+}
+
+.agents {
+  position: relative;
+}
+
+.drop-before::after,
+.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--focus);
+  pointer-events: none;
+}
+
+.drop-before::after {
+  top: -2px;
+}
+
+.drop-after::after {
+  bottom: -2px;
+}
+
 /* ⌘N shortcut hint next to an open session's title */
 .slot {
   flex: none;
