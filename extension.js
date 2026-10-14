@@ -112,11 +112,15 @@ async function projectDirs() {
     return [];
   }
   const sub = cfg().get('includeSubfolders');
+  // Windows paths ignore case: fsPath lowercases the drive letter, while Claude Code keeps the cwd's casing, and
+  // the folder keeps whichever casing created it first.
+  const fold = process.platform === 'win32' ? (s) => s.toLowerCase() : (s) => s;
   const dirs = new Set();
   for (const f of vscode.workspace.workspaceFolders || []) {
-    const enc = transcripts.encodeCwd(f.uri.fsPath);
+    const enc = fold(transcripts.encodeCwd(f.uri.fsPath));
     for (const e of entries) {
-      if (e.isDirectory() && (e.name === enc || (sub && e.name.startsWith(enc + '-')))) {
+      const name = fold(e.name);
+      if (e.isDirectory() && (name === enc || (sub && name.startsWith(enc + '-')))) {
         dirs.add(path.join(PROJECTS_DIR, e.name));
       }
     }
