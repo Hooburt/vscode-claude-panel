@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2
+
+- New sessions now get the colour you picked inside Claude Code too: there's no command-line option for it, so
+  the extension sends `/color` once the session is ready.
+- Session colours now match Claude Code's own (the panel and terminal tabs used the editor theme's terminal
+  colours before). They're theme colours (`claudeSessions.red` …), so `workbench.colorCustomizations` can change them.
+
 ## 0.8.1
 
 - *Close session* in the `⋯` menu of an open session closes its terminal, asking first if it's still working

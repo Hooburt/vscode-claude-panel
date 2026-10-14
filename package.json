@@ -2,7 +2,7 @@
   "name": "claude-sessions",
   "displayName": "Session Panel for Claude Code",
   "description": "A panel for your Claude Code terminal sessions: see what's running, open several at once in named, coloured terminals, and reopen them after a restart.",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publisher": "bkaluza",
   "author": {
     "name": "Bostjan Kaluza"
@@ -59,6 +59,48 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "colors": [
+      {
+        "id": "claudeSessions.red",
+        "description": "Claude Code's red session colour (/color red).",
+        "defaults": { "dark": "#DC2626", "light": "#DC2626", "highContrast": "#DC2626", "highContrastLight": "#DC2626" }
+      },
+      {
+        "id": "claudeSessions.orange",
+        "description": "Claude Code's orange session colour (/color orange).",
+        "defaults": { "dark": "#D97757", "light": "#D97757", "highContrast": "#D97757", "highContrastLight": "#D97757" }
+      },
+      {
+        "id": "claudeSessions.yellow",
+        "description": "Claude Code's yellow session colour (/color yellow).",
+        "defaults": { "dark": "#CA8A04", "light": "#CA8A04", "highContrast": "#CA8A04", "highContrastLight": "#CA8A04" }
+      },
+      {
+        "id": "claudeSessions.green",
+        "description": "Claude Code's green session colour (/color green).",
+        "defaults": { "dark": "#16A34A", "light": "#16A34A", "highContrast": "#16A34A", "highContrastLight": "#16A34A" }
+      },
+      {
+        "id": "claudeSessions.cyan",
+        "description": "Claude Code's cyan session colour (/color cyan).",
+        "defaults": { "dark": "#0891B2", "light": "#0891B2", "highContrast": "#0891B2", "highContrastLight": "#0891B2" }
+      },
+      {
+        "id": "claudeSessions.blue",
+        "description": "Claude Code's blue session colour (/color blue).",
+        "defaults": { "dark": "#6A9BCC", "light": "#6A9BCC", "highContrast": "#6A9BCC", "highContrastLight": "#6A9BCC" }
+      },
+      {
+        "id": "claudeSessions.purple",
+        "description": "Claude Code's purple session colour (/color purple).",
+        "defaults": { "dark": "#827DBD", "light": "#827DBD", "highContrast": "#827DBD", "highContrastLight": "#827DBD" }
+      },
+      {
+        "id": "claudeSessions.pink",
+        "description": "Claude Code's pink session colour (/color pink).",
+        "defaults": { "dark": "#C46686", "light": "#C46686", "highContrast": "#C46686", "highContrastLight": "#C46686" }
+      }
+    ],
     "viewsContainers": {
       "secondarySidebar": [
         {

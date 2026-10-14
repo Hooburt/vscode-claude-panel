@@ -25,17 +25,10 @@ const SPLIT_TIP_KEY = 'claudeSessions.splitTipShown'; // globalState: the split-
 const SLOT_COMMANDS = Array.from({ length: 9 }, (_, i) => `claudeSessions.focus${i + 1}`);
 const MOD_KEY = process.platform === 'darwin' ? 'Cmd' : 'Ctrl';
 
-// Claude Code's /color names → terminal theme colours.
-const COLORS = {
-  red: 'terminal.ansiRed',
-  orange: 'terminal.ansiYellow',
-  yellow: 'terminal.ansiYellow',
-  green: 'terminal.ansiGreen',
-  cyan: 'terminal.ansiCyan',
-  blue: 'terminal.ansiBlue',
-  purple: 'terminal.ansiMagenta',
-  pink: 'terminal.ansiBrightMagenta',
-};
+// Claude Code's /color names → our theme colours (package.json "colors"), which default to Claude Code's own values.
+const COLORS = Object.fromEntries(
+  ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink'].map((c) => [c, `claudeSessions.${c}`])
+);
 
 let context;
 let view;
@@ -252,10 +245,13 @@ function trackRemembered() {
     termSession.set(e.terminal, id);
     termMisses.delete(e.terminal);
     if (!ids.includes(id)) add.push(id);
+    // There's no command-line option for the colour, so a new session gets /color once Claude is at its prompt.
     const color = pendingColor.get(e.terminal);
-    if (color && e.status !== 'starting') {
+    if (color && e.status === 'idle') {
       pendingColor.delete(e.terminal);
       if (!sessions.get(id)?.color) setPref(id, { color });
+      e.terminal.sendText(`/color ${color}`, false);
+      setTimeout(() => e.terminal.sendText('\r', false), 150);
     }
   }
   const drop = [];

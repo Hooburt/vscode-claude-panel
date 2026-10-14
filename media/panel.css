@@ -623,18 +623,14 @@ body.skipping .switch-label {
 
 /* Session colours. Classes, not inline styles: the webview's CSP blocks style attributes. */
 .c-none { --c: var(--muted-dot); }
-.c-red { --c: var(--vscode-terminal-ansiRed); }
-/* Dark themes' yellow is far brighter than their other ANSI colours; pulled toward the background it sits with
-   them. Light themes' yellow is already a dull olive. */
-.c-orange,
-.c-yellow { --c: var(--vscode-terminal-ansiYellow); }
-.vscode-dark .c-orange,
-.vscode-dark .c-yellow { --c: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 72%, var(--vscode-sideBar-background, transparent)); }
-.c-green { --c: var(--vscode-terminal-ansiGreen); }
-.c-cyan { --c: var(--vscode-terminal-ansiCyan); }
-.c-blue { --c: var(--vscode-terminal-ansiBlue); }
-.c-purple { --c: var(--vscode-terminal-ansiMagenta); }
-.c-pink { --c: var(--vscode-terminal-ansiBrightMagenta); }
+.c-red { --c: var(--vscode-claudeSessions-red, #DC2626); }
+.c-orange { --c: var(--vscode-claudeSessions-orange, #D97757); }
+.c-yellow { --c: var(--vscode-claudeSessions-yellow, #CA8A04); }
+.c-green { --c: var(--vscode-claudeSessions-green, #16A34A); }
+.c-cyan { --c: var(--vscode-claudeSessions-cyan, #0891B2); }
+.c-blue { --c: var(--vscode-claudeSessions-blue, #6A9BCC); }
+.c-purple { --c: var(--vscode-claudeSessions-purple, #827DBD); }
+.c-pink { --c: var(--vscode-claudeSessions-pink, #C46686); }
 
 /* ---------------------------------------------------------------- context usage */
 
