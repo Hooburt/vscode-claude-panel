@@ -169,9 +169,37 @@ async function readLive() {
   return out;
 }
 
-function parentPids() {
+// Windows has no ps; CIM has the same pid → parent table, but takes a couple of seconds to ask.
+const PS =
+  process.platform === 'win32'
+    ? [
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }",
+        ],
+      ]
+    : ['ps', ['-A', '-o', 'pid=,ppid=']];
+
+// A process's parent never changes, so where listing them is slow the map is only rebuilt when a claude
+// process turns up that it hasn't seen (keyed by start time too, in case a pid is reused).
+let parentCache = { map: new Map(), seen: new Set() };
+
+async function parentPids(records) {
+  if (process.platform !== 'win32') return listParents();
+  const keys = records.map((d) => `${d.pid}:${d.startedAt}`);
+  if (keys.some((k) => !parentCache.seen.has(k))) {
+    const map = await listParents();
+    parentCache = { map, seen: map.size ? new Set(keys) : new Set() };
+  }
+  return parentCache.map;
+}
+
+function listParents() {
   return new Promise((resolve) => {
-    execFile('ps', ['-A', '-o', 'pid=,ppid='], (err, stdout) => {
+    execFile(PS[0], PS[1], { windowsHide: true }, (err, stdout) => {
       const map = new Map();
       if (!err) {
         for (const line of stdout.split('\n')) {
@@ -186,7 +214,7 @@ function parentPids() {
 
 async function pollLive() {
   const records = await readLive();
-  const parents = records.length ? await parentPids() : new Map();
+  const parents = records.length ? await parentPids(records) : new Map();
   const shells = new Map();
   await Promise.all(
     vscode.window.terminals.map(async (t) => {
