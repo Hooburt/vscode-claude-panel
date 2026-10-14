@@ -585,6 +585,7 @@ async function moreActions(id) {
       run: () => resume(id, { skip: !skip }),
     },
     { label: '$(repo-forked) Fork into a new session', run: () => resume(id, { fork: true }) },
+    ...(live.get(id)?.terminal ? [{ label: '$(close) Close session', run: closeSession }] : []),
     { label: '', kind: vscode.QuickPickItemKind.Separator },
     {
       label: '$(go-to-file) Open transcript file',
@@ -595,6 +596,21 @@ async function moreActions(id) {
   ];
   const pick = await vscode.window.showQuickPick(items, { title: titleOf(id) });
   return pick?.run?.(id);
+}
+
+// Closes the session's terminal, which ends Claude Code there; the session can be resumed later.
+async function closeSession(id) {
+  const e = live.get(id);
+  if (!e?.terminal) return;
+  if (e.status === 'busy' || e.status === 'waiting') {
+    const ok = await vscode.window.showWarningMessage(
+      `"${titleOf(id)}" is ${e.status === 'busy' ? 'still working' : 'waiting for you'}. Close it anyway?`,
+      { modal: true },
+      'Close'
+    );
+    if (ok !== 'Close') return;
+  }
+  e.terminal.dispose();
 }
 
 // Move up / down within the session's section, where it has somewhere to go (Alt+Up/Down in the panel).

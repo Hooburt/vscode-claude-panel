@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+
+- *Close session* in the `⋯` menu of an open session closes its terminal, asking first if it's still working
+  or waiting for you. It can be resumed later.
+
 ## 0.8.0
 
 - **Put sessions in your own order**: drag *Open in this window* and *Pinned* sessions within their section, press
